@@ -37,9 +37,26 @@ data class Waypoint(
     val p2: Int = 0,
     val p3: Int = 0,
     val isLast: Boolean = false,
+    /**
+     * App-only, never sent to the flight controller or written to a mission file: the user asked for this many metres above
+     * the ground under the point. [altitudeCm] then holds the home-relative number converted from it, and [groundBasis]
+     * records what that conversion was computed from (see [GroundHeight]).
+     */
+    val groundHeightM: Int? = null,
+    val groundBasis: String? = null,
 ) {
     val latitude: Double get() = latE7 / 1e7
     val longitude: Double get() = lonE7 / 1e7
+
+    val altitudeMode: AltitudeMode
+        get() = when {
+            groundHeightM != null -> AltitudeMode.GROUND
+            isSeaLevelRef -> AltitudeMode.SEA_LEVEL
+            else -> AltitudeMode.HOME
+        }
+
+    /** The waypoint as the flight controller stores it, without the app-only ground-height intent. */
+    fun wireForm(): Waypoint = copy(groundHeightM = null, groundBasis = null)
 
     /** p3 bit 0: altitude is relative to sea level instead of the home point. */
     val isSeaLevelRef: Boolean get() = (p3 and 1) != 0

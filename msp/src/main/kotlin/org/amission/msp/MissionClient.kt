@@ -55,7 +55,8 @@ class MissionClient(private val link: MspLink) {
             throw MspException("FC reports ${after.waypointCount} waypoints after upload, expected ${normalized.size}")
         }
         val readBack = download()
-        if (readBack != normalized) throw MspException("Read-back does not match the uploaded mission")
+        // The FC only holds what was sent on the wire, so compare that, not the app-only ground-height intent.
+        if (readBack != normalized.map { it.wireForm() }) throw MspException("Read-back does not match the uploaded mission")
     }
 
     fun saveToEeprom() {
