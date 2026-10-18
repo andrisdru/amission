@@ -255,7 +255,7 @@ fun OfflineMapsDialog(vm: MissionViewModel, onDismiss: () -> Unit) {
                     Text("Move the map first so the area is known.")
                 } else {
                     Text(
-                        "Zoom $minZoom to $maxZoom · about $tiles tiles · roughly ${formatEstimate(estimatedMb)} (estimate)",
+                        "Zoom $minZoom to $maxZoom · about ${String.format(Locale.US, "%,d", tiles)} tiles · roughly ${formatEstimate(estimatedMb)} (estimate)",
                         style = MaterialTheme.typography.bodySmall,
                     )
                     if (needsFonts) {
@@ -330,5 +330,8 @@ fun OfflineMapsDialog(vm: MissionViewModel, onDismiss: () -> Unit) {
     )
 }
 
-private fun formatEstimate(mb: Double): String =
-    if (mb < 10) String.format(Locale.US, "%.1f MB", mb) else String.format(Locale.US, "%.0f MB", mb)
+private fun formatEstimate(mb: Double): String = when {
+    mb < 10 -> String.format(Locale.US, "%.1f MB", mb)
+    mb < 100_000 -> String.format(Locale.US, "%,.0f MB", mb)
+    else -> "over 100,000 MB"
+}
