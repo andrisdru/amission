@@ -29,7 +29,8 @@ $env:JAVA_HOME="C:\Program Files\Android\Android Studio\jbr"
 ## Protocol notes
 
 - Waypoint wire format is 21 bytes little-endian: number u8, action u8, lat i32, lon i32 (degrees × 1e7), alt i32 (cm), p1/p2/p3 i16, flag u8 (0xA5 marks the last waypoint). Commands: WP_GETINFO 20, WP 118, SET_WP 209, WP_MISSION_LOAD 18, WP_MISSION_SAVE 19.
-- These values were written from memory of INAV's `msp.c` and have not yet been checked against the 9.1 source or a real FC. Verify before flying. Uploads must always be read back and compared (`uploadAndVerify`).
+- Wire format, action codes, `0xA5` last flag, and the 1-byte payload of WP_MISSION_LOAD/SAVE were checked against the INAV 9.1.0 source (`fc_msp.c`, `navigation.h`) but not yet against a real FC. Uploads must always be read back and compared (`uploadAndVerify`). The max waypoint count comes from the FC (`WP_GETINFO`); the source default is 15 unless the target overrides it.
+- p3 is a bitfield: bit 0 altitude is sea-level/absolute, bits 1-4 = user actions 1-4. User actions do nothing by themselves; the FC exposes them only to logic conditions ("Waypoint user action N" reads the waypoint just left, the `_NEXT_WP` operands the one being flown to) and, in 9.x, to the optional VTOL mission transition. For JUMP, p3 is a runtime counter (reset from p2 at mission start), so always send p3 = 0.
 - Only MSP v1 is implemented; the mission commands are v1.
 
 ## Planned, not yet built

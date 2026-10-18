@@ -47,11 +47,19 @@ class MissionClient(private val link: MspLink) {
     }
 
     companion object {
-        /** Renumbers 1..n and sets the last-waypoint flag on the final entry only. */
+        /**
+         * Renumbers 1..n and sets the last-waypoint flag on the final entry only.
+         * INAV uses p3 of a JUMP as a volatile runtime counter (reset from p2 at mission start),
+         * so a JUMP is always sent with p3 = 0 rather than whatever a flown mission left in it.
+         */
         fun normalize(waypoints: List<Waypoint>): List<Waypoint> {
             if (waypoints.isEmpty()) throw MspException("Mission is empty")
             return waypoints.mapIndexed { i, w ->
-                w.copy(number = i + 1, isLast = i == waypoints.lastIndex)
+                w.copy(
+                    number = i + 1,
+                    isLast = i == waypoints.lastIndex,
+                    p3 = if (w.action == WaypointAction.JUMP) 0 else w.p3,
+                )
             }
         }
     }

@@ -4,14 +4,14 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /** INAV waypoint actions (navigation.h, navWaypointActions_e). */
-enum class WaypointAction(val code: Int) {
-    WAYPOINT(1),
-    POSHOLD_TIME(3),
-    RTH(4),
-    SET_POI(5),
-    JUMP(6),
-    SET_HEAD(7),
-    LAND(8);
+enum class WaypointAction(val code: Int, val label: String, val hasPosition: Boolean) {
+    WAYPOINT(1, "Waypoint", true),
+    POSHOLD_TIME(3, "PosHold Time", true),
+    RTH(4, "RTH", false),
+    SET_POI(5, "Set POI", true),
+    JUMP(6, "Jump", false),
+    SET_HEAD(7, "Set Head", false),
+    LAND(8, "Land", true);
 
     companion object {
         fun fromCode(code: Int): WaypointAction =
@@ -37,6 +37,25 @@ data class Waypoint(
 ) {
     val latitude: Double get() = latE7 / 1e7
     val longitude: Double get() = lonE7 / 1e7
+
+    /** p3 bit 0: altitude is relative to sea level instead of the home point. */
+    val isSeaLevelRef: Boolean get() = (p3 and 1) != 0
+
+    fun withSeaLevelRef(on: Boolean): Waypoint = copy(p3 = setBit(p3, 0, on))
+
+    /** p3 bits 1..4: user actions 1..4 that INAV exposes to logic conditions. */
+    fun userAction(n: Int): Boolean {
+        require(n in 1..4) { "user action must be 1..4" }
+        return (p3 shr n and 1) != 0
+    }
+
+    fun withUserAction(n: Int, on: Boolean): Waypoint {
+        require(n in 1..4) { "user action must be 1..4" }
+        return copy(p3 = setBit(p3, n, on))
+    }
+
+    private fun setBit(value: Int, bit: Int, on: Boolean) =
+        if (on) value or (1 shl bit) else value and (1 shl bit).inv()
 
     fun encode(): ByteArray {
         val buf = ByteBuffer.allocate(PAYLOAD_SIZE).order(ByteOrder.LITTLE_ENDIAN)

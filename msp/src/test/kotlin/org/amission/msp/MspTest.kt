@@ -110,6 +110,14 @@ class MissionClientTest {
     }
 
     @Test
+    fun jumpIsSentWithZeroedRuntimeCounter() {
+        val wps = mission().dropLast(1) + Waypoint(0, WaypointAction.JUMP, 0, 0, 0, p1 = 1, p2 = 2, p3 = 7)
+        val normalized = MissionClient.normalize(wps)
+        assertEquals(0, normalized.last().p3)
+        assertEquals(2, normalized.last().p2)
+    }
+
+    @Test
     fun failsWhenReadBackDiffers() {
         val client = MissionClient(FakeFc(corruptReadBack = true))
         assertFailsWith<MspException> { client.uploadAndVerify(mission()) }
