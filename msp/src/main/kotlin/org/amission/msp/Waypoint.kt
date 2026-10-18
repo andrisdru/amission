@@ -13,6 +13,9 @@ enum class WaypointAction(val code: Int, val label: String, val hasPosition: Boo
     SET_HEAD(7, "Set Head", false),
     LAND(8, "Land", true);
 
+    /** True when the quad actually flies to this point. A Set POI has a map position but is only looked at. */
+    val isFlownTo: Boolean get() = this == WAYPOINT || this == POSHOLD_TIME || this == LAND
+
     companion object {
         fun fromCode(code: Int): WaypointAction =
             entries.firstOrNull { it.code == code } ?: throw MspException("Unknown waypoint action $code")

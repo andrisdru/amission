@@ -41,3 +41,16 @@ class WaypointFlagsTest {
         assertEquals(111.2, d, 0.5)
     }
 }
+
+class FlownToTest {
+    @Test
+    fun onlyPointsTheQuadReachesAreFlownTo() {
+        assertTrue(WaypointAction.WAYPOINT.isFlownTo)
+        assertTrue(WaypointAction.POSHOLD_TIME.isFlownTo)
+        assertTrue(WaypointAction.LAND.isFlownTo)
+        assertFalse(WaypointAction.SET_POI.isFlownTo, "a POI is looked at, not flown to")
+        assertFalse(WaypointAction.RTH.isFlownTo)
+        assertFalse(WaypointAction.JUMP.isFlownTo)
+        assertFalse(WaypointAction.SET_HEAD.isFlownTo)
+    }
+}

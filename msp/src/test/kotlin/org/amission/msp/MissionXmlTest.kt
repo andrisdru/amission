@@ -115,3 +115,27 @@ class MissionXmlTest {
         assertTrue(MissionXml.read(xml).waypoints.single().isLast)
     }
 }
+
+class MissionXmlHomeTest {
+    private val one = listOf(Waypoint(1, WaypointAction.WAYPOINT, 568_000_000, 246_000_000, 8_000))
+
+    @Test
+    fun homeRoundTrips() {
+        val xml = MissionXml.write(one, home = 56.79 to 24.59)
+        assertTrue("home-x=\"24.59\" home-y=\"56.79\"" in xml, xml)
+        assertEquals(56.79 to 24.59, MissionXml.read(xml).home)
+    }
+
+    @Test
+    fun noHomeIsWrittenAsZeroAndReadBackAsNone() {
+        val xml = MissionXml.write(one)
+        assertTrue("home-x=\"0\" home-y=\"0\"" in xml)
+        assertEquals(null, MissionXml.read(xml).home)
+    }
+
+    @Test
+    fun badHomeIsIgnoredNotFatal() {
+        val xml = """<mission><mwp home-x="999" home-y="NaN"/><missionitem action="WAYPOINT" lat="1" lon="1" alt="1" parameter1="0" parameter2="0" parameter3="0" flag="165"/></mission>"""
+        assertEquals(null, MissionXml.read(xml).home)
+    }
+}

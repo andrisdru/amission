@@ -9,7 +9,7 @@ import org.w3c.dom.Node
 class MissionFileException(message: String) : Exception(message)
 
 /** Result of reading a mission file. [ignoredItems] counts entries after the first mission's end marker. */
-class MissionImport(val waypoints: List<Waypoint>, val ignoredItems: Int)
+class MissionImport(val waypoints: List<Waypoint>, val ignoredItems: Int, val home: Pair<Double, Double>? = null)
 
 /**
  * Reads and writes the mission file format used by the INAV Configurator (and mwp):
@@ -22,14 +22,20 @@ object MissionXml {
     const val MAX_CHARS = 1_000_000
     const val MAX_ITEMS = 255
 
-    fun write(waypoints: List<Waypoint>, centerLat: Double? = null, centerLon: Double? = null, zoom: Int? = null): String {
+    fun write(
+        waypoints: List<Waypoint>,
+        centerLat: Double? = null,
+        centerLon: Double? = null,
+        zoom: Int? = null,
+        home: Pair<Double, Double>? = null,
+    ): String {
         val items = MissionClient.normalize(waypoints)
         val sb = StringBuilder()
         sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<mission>\n")
         sb.append("\t<version value=\"").append(VERSION).append("\"/>\n")
         sb.append("\t<mwp")
         if (centerLon != null && centerLat != null) sb.append(" cx=\"").append(deg(centerLon)).append("\" cy=\"").append(deg(centerLat)).append('"')
-        sb.append(" home-x=\"0\" home-y=\"0\"")
+        sb.append(" home-x=\"").append(deg(home?.second ?: 0.0)).append("\" home-y=\"").append(deg(home?.first ?: 0.0)).append("\"")
         if (zoom != null) sb.append(" zoom=\"").append(zoom).append('"')
         sb.append("/>\n")
         for (w in items) {
@@ -65,9 +71,12 @@ object MissionXml {
         val items = ArrayList<Waypoint>()
         var ended = false
         var ignored = 0
+        var home: Pair<Double, Double>? = null
         var child: Node? = root.firstChild
         while (child != null) {
-            if (child is Element && child.tagName.equals("missionitem", ignoreCase = true)) {
+            if (child is Element && child.tagName.equals("mwp", ignoreCase = true)) {
+                home = parseHome(child) ?: home
+            } else if (child is Element && child.tagName.equals("missionitem", ignoreCase = true)) {
                 if (child.attributes.length == 0) { child = child.nextSibling; continue }
                 if (ended) {
                     ignored++
@@ -86,7 +95,17 @@ object MissionXml {
                 throw MissionFileException("Point ${w.number} jumps to a point that is not in the mission")
             }
         }
-        return MissionImport(MissionClient.normalize(items), ignored)
+        return MissionImport(MissionClient.normalize(items), ignored, home)
+    }
+
+    /** The planned take-off point; the Configurator writes 0,0 when none is set. */
+    private fun parseHome(e: Element): Pair<Double, Double>? {
+        fun attr(name: String) = (0 until e.attributes.length).map { e.attributes.item(it) }
+            .firstOrNull { it.nodeName.equals(name, true) }?.nodeValue?.trim()?.toDoubleOrNull()?.takeIf { it.isFinite() }
+        val lon = attr("home-x") ?: return null
+        val lat = attr("home-y") ?: return null
+        if ((lat == 0.0 && lon == 0.0) || lat !in -90.0..90.0 || lon !in -180.0..180.0) return null
+        return lat to lon
     }
 
     private fun parseItem(e: Element, number: Int): Waypoint {
