@@ -1,6 +1,7 @@
 package org.amission
 
 import android.app.Application
+import android.content.Context
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -52,13 +53,17 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.amission.msp.GpsFix
+import org.amission.msp.FlightProfileBuilder
 import org.amission.msp.MissionClient
 import org.amission.msp.MissionFileException
 import org.amission.msp.MissionImport
 import org.amission.msp.MissionXml
+import org.amission.msp.PathVertex
 import org.amission.msp.SerialMspLink
 import org.amission.msp.TelemetryClient
 import org.amission.msp.Waypoint
@@ -81,7 +86,10 @@ class MissionViewModel(app: Application) : AndroidViewModel(app) {
         mapSettings.save(config)
     }
 
-    var waypoints by mutableStateOf(store.load())
+    private val stored = store.load()
+    private val prefs = app.getSharedPreferences("amission_prefs", Context.MODE_PRIVATE)
+
+    var waypoints by mutableStateOf(stored.waypoints)
         private set
     var selected by mutableStateOf<Int?>(null)
         private set
@@ -93,8 +101,11 @@ class MissionViewModel(app: Application) : AndroidViewModel(app) {
     private fun update(list: List<Waypoint>, sel: Int? = selected) {
         waypoints = list.mapIndexed { i, w -> w.copy(number = i + 1, isLast = i == list.lastIndex) }
         selected = sel?.takeIf { it in waypoints.indices }
-        store.save(waypoints)
+        persist()
+        scheduleProfile()
     }
+
+    private fun persist() = store.save(waypoints, home)
 
     /** Bumped to ask the map to zoom to the mission; starts at 1 when there is already a mission to show. */
     var fitRequest by mutableIntStateOf(if (waypoints.any { it.action.hasPosition }) 1 else 0)
@@ -102,9 +113,86 @@ class MissionViewModel(app: Application) : AndroidViewModel(app) {
 
     fun requestFit() { fitRequest++ }
 
-    /** Home position (lat, lon) for the "Grd Dist" row. Not known until set; null shows "NO HOME". */
-    var home by mutableStateOf<Pair<Double, Double>?>(null)
+    /**
+     * Planned take-off point (lat, lon). Relative altitudes count from here, so it matters for the
+     * height-above-ground check and the "Grd Dist" row. Null shows "NO HOME".
+     */
+    var home by mutableStateOf(stored.home)
         private set
+
+    fun setHome(lat: Double, lon: Double) {
+        home = lat to lon
+        persist()
+        scheduleProfile()
+        status = "Home set. Relative altitudes now count from there."
+    }
+
+    fun setHomeAtMapCenter() {
+        val c = mapCenter ?: return
+        setHome(c.first, c.second)
+    }
+
+    fun setHomeAtMyPosition() {
+        val l = locateResult
+        if (l == null) { status = "Tap Locate first, then set home at your position."; return }
+        setHome(l.lat, l.lon)
+    }
+
+    fun clearHome() {
+        home = null
+        persist()
+        scheduleProfile()
+        status = "Home cleared."
+    }
+
+    /** Height above the take-off point that a newly added waypoint starts at. */
+    var defaultAltM by mutableIntStateOf(prefs.getInt("defaultAltM", DEFAULT_ALTITUDE_CM / 100))
+        private set
+
+    fun setDefaultAlt(m: Int) {
+        defaultAltM = m.coerceIn(0, 500)
+        prefs.edit().putInt("defaultAltM", defaultAltM).apply()
+    }
+
+    /** Warn when the plan is lower than this above the ground. */
+    var minAglM by mutableIntStateOf(prefs.getInt("minAglM", DEFAULT_MIN_AGL_M))
+        private set
+
+    fun setMinAgl(m: Int) {
+        minAglM = m.coerceIn(0, 500)
+        prefs.edit().putInt("minAglM", minAglM).apply()
+        scheduleProfile()
+    }
+
+    var profile by mutableStateOf<ProfileState>(ProfileState.Empty)
+        private set
+
+    val hasClearanceIssues: Boolean get() = (profile as? ProfileState.Ready)?.profile?.hasIssues == true
+
+    private var profileJob: Job? = null
+
+    /** Recomputes the terrain profile shortly after the last change, so typing an altitude does not spam lookups. */
+    private fun scheduleProfile() {
+        profileJob?.cancel()
+        val path = waypoints.filter { it.action.isFlownTo }
+            .map { PathVertex(it.number, it.latitude, it.longitude, it.altitudeCm / 100.0, it.isSeaLevelRef) }
+        if (path.isEmpty()) { profile = ProfileState.Empty; return }
+        val homePoint = home
+        val minAgl = minAglM.toDouble()
+        profileJob = viewModelScope.launch {
+            delay(600)
+            profile = ProfileState.Loading
+            val samples = FlightProfileBuilder.sampleRoute(path)
+            val start = homePoint ?: (path[0].lat to path[0].lon)
+            val heights = ElevationService.elevations(listOf(start) + samples.map { it.lat to it.lon })
+            profile = if (heights.any { it == null }) {
+                ProfileState.NoData("Terrain heights are not available. They need internet the first time a route is checked.")
+            } else {
+                val h = heights.map { it!! }
+                ProfileState.Ready(FlightProfileBuilder.build(path, samples, h.drop(1), h[0], minAgl), homeAssumed = homePoint == null)
+            }
+        }
+    }
 
     /** Last map camera centre, used by the table's "+" button. */
     private var mapCenter: Pair<Double, Double>? = null
@@ -124,7 +212,7 @@ class MissionViewModel(app: Application) : AndroidViewModel(app) {
         val wp = Waypoint(
             number = 0, action = WaypointAction.WAYPOINT,
             latE7 = (lat * 1e7).roundToInt(), lonE7 = (lon * 1e7).roundToInt(),
-            altitudeCm = waypoints.lastOrNull { it.action.hasPosition }?.altitudeCm ?: DEFAULT_ALTITUDE_CM,
+            altitudeCm = defaultAltM * 100,
         )
         update(waypoints + wp, sel = waypoints.size)
     }
@@ -141,6 +229,7 @@ class MissionViewModel(app: Application) : AndroidViewModel(app) {
             centerLat = v?.let { (it.south + it.north) / 2 },
             centerLon = v?.let { (it.west + it.east) / 2 },
             zoom = v?.zoom?.toInt(),
+            home = home,
         )
     }
 
@@ -177,6 +266,7 @@ class MissionViewModel(app: Application) : AndroidViewModel(app) {
     fun cancelImport() { pendingImport = null }
 
     private fun applyImport(imported: MissionImport) {
+        if (imported.home != null) home = imported.home
         update(imported.waypoints, sel = null)
         requestFit()
         val extra = if (imported.ignoredItems > 0) " (the file held more missions; only the first was opened)" else ""
@@ -190,7 +280,7 @@ class MissionViewModel(app: Application) : AndroidViewModel(app) {
             status = "Mission already ends with RTH"
             return
         }
-        val alt = waypoints.lastOrNull { it.action.hasPosition }?.altitudeCm ?: DEFAULT_ALTITUDE_CM
+        val alt = waypoints.lastOrNull { it.action.hasPosition }?.altitudeCm ?: (defaultAltM * 100)
         val rth = Waypoint(number = 0, action = WaypointAction.RTH, latE7 = 0, lonE7 = 0, altitudeCm = alt)
         update(waypoints + rth, sel = waypoints.size)
         status = "Added RTH as point ${waypoints.size}"
@@ -294,7 +384,7 @@ class MissionViewModel(app: Application) : AndroidViewModel(app) {
             w.copy(latE7 = 0, lonE7 = 0, altitudeCm = if (action == WaypointAction.RTH) old.altitudeCm else 0, p3 = 0)
         } else if (!old.action.hasPosition && centre != null) {
             w.copy(latE7 = (centre.first * 1e7).roundToInt(), lonE7 = (centre.second * 1e7).roundToInt(),
-                altitudeCm = if (old.altitudeCm != 0) old.altitudeCm else DEFAULT_ALTITUDE_CM)
+                altitudeCm = if (old.altitudeCm != 0) old.altitudeCm else defaultAltM * 100)
         } else w
     }
 
@@ -344,8 +434,15 @@ class MissionViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    init {
+        ElevationService.init(app)
+        scheduleProfile()
+    }
+
     private companion object {
-        const val DEFAULT_ALTITUDE_CM = 3000
+        /** New waypoints start at 80 m above the take-off point. */
+        const val DEFAULT_ALTITUDE_CM = 8000
+        const val DEFAULT_MIN_AGL_M = 40
     }
 }
 
@@ -368,6 +465,7 @@ private fun MissionScreen(vm: MissionViewModel = viewModel()) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var confirmClear by remember { mutableStateOf(false) }
     var confirmDownload by remember { mutableStateOf(false) }
+    var pendingUpload by remember { mutableStateOf<Boolean?>(null) }
     // Selecting a waypoint (map tap or table row) brings its editor up.
     LaunchedEffect(vm.selected) { if (vm.selected != null) { tab = 0; expanded = true } }
     val maxPanelHeight = (LocalConfiguration.current.screenHeightDp * 0.45f).dp
@@ -392,6 +490,7 @@ private fun MissionScreen(vm: MissionViewModel = viewModel()) {
                 mapStyle = mapStyle,
                 fitRequest = vm.fitRequest,
                 locate = vm.locateResult,
+                home = vm.home,
                 modifier = Modifier.fillMaxSize(),
             )
             FlowRow(
@@ -465,6 +564,10 @@ private fun MissionScreen(vm: MissionViewModel = viewModel()) {
                 onSaveFile = { saveFile.launch(MissionFiles.suggestedName()) },
                 onOpenFile = { openFile.launch(arrayOf("*/*")) },
                 onShare = { context.startActivity(MissionFiles.shareChooser(context, vm.missionXml())) },
+                onUpload = { save ->
+                    // Low clearance is a warning, not a block: ask once, then let the user decide.
+                    if (vm.hasClearanceIssues) pendingUpload = save else vm.uploadToFc(save)
+                },
             )
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 8.dp),
@@ -477,6 +580,11 @@ private fun MissionScreen(vm: MissionViewModel = viewModel()) {
                     onClick = { tab = 1; expanded = true },
                     label = { Text("List (${vm.waypoints.size})") },
                 )
+                FilterChip(
+                    selected = expanded && tab == 2,
+                    onClick = { tab = 2; expanded = true },
+                    label = { Text(if (vm.hasClearanceIssues) "Profile ⚠" else "Profile") },
+                )
                 Spacer(Modifier.weight(1f))
                 TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "Hide ▼" else "Show ▲") }
             }
@@ -488,9 +596,16 @@ private fun MissionScreen(vm: MissionViewModel = viewModel()) {
                     val sel = vm.selected
                     if (tab == 0) {
                         if (sel != null && sel in vm.waypoints.indices) WaypointEditor(vm, sel)
-                        else Text("Tap the map to add a waypoint, or tap a marker to edit it.", Modifier.padding(8.dp))
-                    } else {
+                        else Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Tap the map to add a waypoint, or tap a marker to edit it.")
+                            NumberField("New point alt (m):", vm.defaultAltM.toString(), intOnly = true) { s ->
+                                s.toIntOrNull()?.let { vm.setDefaultAlt(it) }
+                            }
+                        }
+                    } else if (tab == 1) {
                         MissionTable(vm)
+                    } else {
+                        ProfileTab(vm)
                     }
                 }
             }
@@ -512,6 +627,25 @@ private fun MissionScreen(vm: MissionViewModel = viewModel()) {
     }
 
     if (showOffline) OfflineMapsDialog(vm, onDismiss = { showOffline = false })
+
+    pendingUpload?.let { save ->
+        val worst = (vm.profile as? ProfileState.Ready)?.profile?.issues?.minByOrNull { it.lowestAglM }
+        AlertDialog(
+            onDismissRequest = { pendingUpload = null },
+            title = { Text("Low flight height") },
+            text = {
+                Text(
+                    "Part of the route is lower than ${vm.minAglM} m above ground" +
+                        (worst?.let { ": the lowest is ${it.lowestAglM.toInt()} m near point ${it.nearWaypoint}" } ?: "") +
+                        ". Check the Profile tab. Upload anyway?",
+                )
+            },
+            confirmButton = { TextButton(onClick = { pendingUpload = null; vm.uploadToFc(save) }) { Text("Upload anyway") } },
+            dismissButton = {
+                TextButton(onClick = { pendingUpload = null; tab = 2; expanded = true }) { Text("Show profile") }
+            },
+        )
+    }
 
     if (confirmDownload) {
         AlertDialog(
@@ -552,6 +686,7 @@ private fun ActionBar(
     onSaveFile: () -> Unit,
     onOpenFile: () -> Unit,
     onShare: () -> Unit,
+    onUpload: (saveToEeprom: Boolean) -> Unit,
 ) {
     var menu by remember { mutableStateOf(false) }
     Row(
@@ -560,7 +695,7 @@ private fun ActionBar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Button(
-            onClick = { vm.uploadToFc(saveToEeprom = true) },
+            onClick = { onUpload(true) },
             enabled = !vm.busy && vm.waypoints.isNotEmpty(),
             modifier = Modifier.weight(1f),
         ) { Text("Upload & save") }
@@ -571,7 +706,7 @@ private fun ActionBar(
                 DropdownMenuItem(
                     text = { Text("Upload without saving (FC memory only)") },
                     enabled = !vm.busy && vm.waypoints.isNotEmpty(),
-                    onClick = { menu = false; vm.uploadToFc(saveToEeprom = false) },
+                    onClick = { menu = false; onUpload(false) },
                 )
                 DropdownMenuItem(
                     text = { Text("Save to file (phone, Drive, pCloud…)") },
@@ -586,6 +721,20 @@ private fun ActionBar(
                     text = { Text("Share…") },
                     enabled = vm.waypoints.isNotEmpty(),
                     onClick = { menu = false; onShare() },
+                )
+                DropdownMenuItem(
+                    text = { Text("Set home at map center") },
+                    onClick = { menu = false; vm.setHomeAtMapCenter() },
+                )
+                DropdownMenuItem(
+                    text = { Text("Set home at my position (after Locate)") },
+                    enabled = vm.locateResult != null,
+                    onClick = { menu = false; vm.setHomeAtMyPosition() },
+                )
+                DropdownMenuItem(
+                    text = { Text("Clear home") },
+                    enabled = vm.home != null,
+                    onClick = { menu = false; vm.clearHome() },
                 )
                 DropdownMenuItem(
                     text = { Text("Add RTH at end") },

@@ -49,6 +49,7 @@ import org.maplibre.geojson.Point
 private const val SRC_POINTS = "wp-points"
 private const val SRC_LINE = "wp-line"
 private const val SRC_ME = "me-position"
+private const val SRC_HOME = "home-position"
 private const val LAYER_POINTS = "wp-points-layer"
 
 /** MapLibre map showing the mission. Tapping empty map adds a waypoint; tapping a waypoint selects it. */
@@ -62,6 +63,7 @@ fun MissionMap(
     mapStyle: MapStyle,
     fitRequest: Int,
     locate: LocateResult?,
+    home: Pair<Double, Double>?,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -147,7 +149,7 @@ fun MissionMap(
 
     AndroidView(factory = { mapView }, modifier = modifier) {
         val m = map
-        if (m != null && styleReady) m.getStyle { updateMission(it, markers, waypoints, selected, locate) }
+        if (m != null && styleReady) m.getStyle { updateMission(it, markers, waypoints, selected, locate, home) }
     }
 }
 
@@ -160,6 +162,7 @@ private fun addMissionLayers(style: Style) {
     style.addSource(GeoJsonSource(SRC_LINE))
     style.addSource(GeoJsonSource(SRC_POINTS))
     style.addSource(GeoJsonSource(SRC_ME))
+    style.addSource(GeoJsonSource(SRC_HOME))
     style.addLayer(
         CircleLayer("me-layer", SRC_ME).withProperties(
             circleRadius(9f), circleColor("#1E88E5"), circleStrokeColor("#ffffff"), circleStrokeWidth(3f),
@@ -169,6 +172,13 @@ private fun addMissionLayers(style: Style) {
     // Markers are drawn from generated bitmaps, not map text, so they never depend on font glyphs
     // that might not be in the offline cache.
     style.addLayer(
+        SymbolLayer("home-layer", SRC_HOME).withProperties(
+            iconImage(MarkerBitmaps.HOME_ICON),
+            iconAllowOverlap(true),
+            iconIgnorePlacement(true),
+        )
+    )
+    style.addLayer(
         SymbolLayer(LAYER_POINTS, SRC_POINTS).withProperties(
             iconImage(get("icon")),
             iconAllowOverlap(true),
@@ -177,7 +187,18 @@ private fun addMissionLayers(style: Style) {
     )
 }
 
-private fun updateMission(style: Style, markers: MarkerBitmaps, waypoints: List<Waypoint>, selected: Int?, me: LocateResult?) {
+private fun updateMission(
+    style: Style,
+    markers: MarkerBitmaps,
+    waypoints: List<Waypoint>,
+    selected: Int?,
+    me: LocateResult?,
+    home: Pair<Double, Double>?,
+) {
+    if (style.getImage(MarkerBitmaps.HOME_ICON) == null) style.addImage(MarkerBitmaps.HOME_ICON, markers.homeBitmap())
+    style.getSourceAs<GeoJsonSource>(SRC_HOME)?.setGeoJson(
+        if (home != null) FeatureCollection.fromFeature(Feature.fromGeometry(Point.fromLngLat(home.second, home.first))) else FeatureCollection.fromFeatures(emptyList<Feature>())
+    )
     style.getSourceAs<GeoJsonSource>(SRC_ME)?.setGeoJson(
         if (me != null) FeatureCollection.fromFeature(Feature.fromGeometry(Point.fromLngLat(me.lon, me.lat))) else FeatureCollection.fromFeatures(emptyList<Feature>())
     )
@@ -192,8 +213,10 @@ private fun updateMission(style: Style, markers: MarkerBitmaps, waypoints: List<
         }
     }
     style.getSourceAs<GeoJsonSource>(SRC_POINTS)?.setGeoJson(FeatureCollection.fromFeatures(points))
-    val line = if (positioned.size >= 2) {
-        Feature.fromGeometry(LineString.fromLngLats(positioned.map { Point.fromLngLat(it.value.longitude, it.value.latitude) }))
+    // The route only passes through points the quad flies to; a Set POI is looked at, not visited.
+    val flown = positioned.filter { it.value.action.isFlownTo }
+    val line = if (flown.size >= 2) {
+        Feature.fromGeometry(LineString.fromLngLats(flown.map { Point.fromLngLat(it.value.longitude, it.value.latitude) }))
     } else null
     style.getSourceAs<GeoJsonSource>(SRC_LINE)?.setGeoJson(
         if (line != null) FeatureCollection.fromFeature(line) else FeatureCollection.fromFeatures(emptyList<Feature>())
@@ -202,6 +225,31 @@ private fun updateMission(style: Style, markers: MarkerBitmaps, waypoints: List<
 
 /** Numbered round waypoint markers, rendered once per number with the platform canvas. */
 private class MarkerBitmaps(private val density: Float) {
+    companion object {
+        const val HOME_ICON = "home-point"
+    }
+
+    /** Green "H" disc marking the planned take-off point. */
+    fun homeBitmap(): Bitmap {
+        val size = (30 * density).toInt()
+        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        val r = size / 2f
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        paint.color = 0xFF2E7D32.toInt()
+        c.drawCircle(r, r, r - 1.5f * density, paint)
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 2f * density
+        paint.color = 0xFFFFFFFF.toInt()
+        c.drawCircle(r, r, r - 1.5f * density, paint)
+        paint.style = Paint.Style.FILL
+        paint.textAlign = Paint.Align.CENTER
+        paint.textSize = 15f * density
+        paint.isFakeBoldText = true
+        c.drawText("H", r, r - (paint.ascent() + paint.descent()) / 2f, paint)
+        return bmp
+    }
+
     fun nameFor(number: Int, selected: Boolean) = (if (selected) "wps-" else "wp-") + number
 
     fun bitmapFor(number: Int, selected: Boolean): Bitmap {

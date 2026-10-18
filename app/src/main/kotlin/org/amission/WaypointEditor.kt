@@ -219,7 +219,7 @@ private fun LabeledRow(label: String, content: @Composable () -> Unit) {
  * "56." is not rewritten, and re-syncs from the model when focus is elsewhere.
  */
 @Composable
-private fun NumberField(label: String, value: String, intOnly: Boolean = false, onValid: (String) -> Unit) {
+internal fun NumberField(label: String, value: String, intOnly: Boolean = false, onValid: (String) -> Unit) {
     var text by remember { mutableStateOf(value) }
     var focused by remember { mutableStateOf(false) }
     LaunchedEffect(value, focused) { if (!focused) text = value }
