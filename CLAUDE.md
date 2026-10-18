@@ -25,6 +25,8 @@ Gradle 9 needs JDK 17 or newer to run. If `JAVA_HOME` points at an older JDK, po
 - `:app` holds Android code: `UsbSerialChannel` (usb-serial-for-android), `MissionStore` (auto-saves the current mission and home as JSON), `MissionMap` (MapLibre; the route and markers are GeoJSON sources and generated bitmaps), `OfflineMaps`, `Locator`, `MissionFiles`, `ProfileView`, `ElevationService`, and the Compose UI in `MainActivity.kt` / `WaypointEditor.kt`.
 - The mission is a local document, edited with no FC attached. A USB connection is opened only for the duration of an upload, download or GPS read. New transports (Bluetooth Classic or BLE) should implement `ByteChannel` and reuse everything above it.
 - MSP calls are blocking; call them off the main thread (`Dispatchers.IO`).
+- Connections: `FcConnections` (`FcConnection.kt`) picks USB or the saved Bluetooth device and returns an `FcLink` wrapping a `ByteChannel`. `Bluetooth.kt` has the scanner and two channels: `BleUartChannel` (GATT serial, found by `BleUart.select` in `:msp`, which knows Nordic UART, HM-10, SpeedyBee and a generic fallback) and `BluetoothClassicChannel` (RFCOMM/SPP). The GEPRC TAKER H743 BT module advertises as "GEPRC" over BLE. A BLE connect that times out (status 147) is retried once after 1.5 s. Android 12+ needs BLUETOOTH_CONNECT and BLUETOOTH_SCAN (declared `neverForLocation`); older versions need location for scanning.
+- `MissionCheck` (in `:msp`) walks the list the way the FC does (RTH and Land end the mission, Jumps loop or fall through) and reports points that are never flown or Jumps to missing points. The FC checks none of this. It feeds the List tab, the upload warning and nothing blocks an upload.
 
 ## Protocol notes
 
@@ -56,4 +58,5 @@ INAV waypoint altitude is relative to the take-off origin unless p3 bit 0 is set
 - Tests use neutral coordinates, never a real flying site or a real person's location.
 - No keys, tokens or personal data in code, tests, commit messages or docs.
 - Commit messages: imperative, sentence case, no `feat:`-style prefixes, never "WIP"; say why when it is not obvious.
-- Not built yet: Bluetooth transport (the FC's Bluetooth is a separate module on a UART; Classic vs BLE is unconfirmed), dragging waypoints on the map, a mission library, release signing.
+- An RTH entry's own altitude is not read by INAV (it just starts the normal return-to-home), so the editor offers none for RTH.
+- Not built yet: dragging waypoints on the map, a mission library, release signing, Bluetooth download and upload tests on hardware.

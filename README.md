@@ -15,7 +15,7 @@ amission is not affiliated with or endorsed by the INAV project.
 - Altitude relative to take-off, or above sea level. New points start at a default altitude you can change (80 m out of the box).
 
 **Talk to the flight controller**
-- USB (OTG) connection. Download the mission from the FC, including the one saved in its EEPROM, and upload with an automatic read-back check. Upload saves to EEPROM by default.
+- USB (OTG) or Bluetooth connection (BLE modules such as the one on the GEPRC TAKER H743 BT; Classic SPP modules are supported but untested). Download the mission from the FC, including the one saved in its EEPROM, and upload with an automatic read-back check. Upload saves to EEPROM by default.
 
 **Maps that work in the field**
 - Street map with no account or key. Satellite imagery from your own MapTiler or Mapbox key, or any tile URL you are licensed to use.
@@ -25,6 +25,7 @@ amission is not affiliated with or endorsed by the INAV project.
 **Safety aids**
 - A **Profile** tab plots planned altitude against distance with the terrain under it, and warns where the quad would be lower than a limit above the ground (40 m by default, adjustable). Uploading a mission with a low stretch asks first.
 - A planned take-off (home) point, because relative altitudes count from there.
+- A mission check that catches mistakes the flight controller would accept without complaint, such as waypoints placed after an RTH (they are never flown), a Jump to a point that does not exist, or a mission that ends on a Set Head. Uploading asks first.
 
 **Files**
 - Save, open and share missions as `.mission` files compatible with the INAV Configurator. The save and open dialogs are Android's own, so Google Drive, pCloud and local storage all work.
@@ -36,6 +37,7 @@ amission is not affiliated with or endorsed by the INAV project.
 | Connect, read mission info | ✅ |
 | Download the saved mission (loads it from EEPROM when working memory is empty) | ✅ |
 | Read the quad's GPS (the no-fix case) | ✅ |
+| Bluetooth LE: find the module, connect, and read mission info (one read-only test; one later attempt timed out. A retry was added, which has not been tested) | ✅ |
 
 | Verified on an Android emulator and a Samsung phone only (no FC involved) | |
 |---|---|
@@ -47,14 +49,14 @@ amission is not affiliated with or endorsed by the INAV project.
 | Quad GPS with a real satellite fix | ❌ |
 | Offline satellite areas with a real provider; Mapbox and custom tile URLs | ❌ |
 | Opening a saved file in the Configurator | ❌ |
-| Bluetooth | not implemented |
+| Bluetooth: downloading or uploading a mission, Classic (SPP) modules | ❌ |
 
 Unit tests cover the protocol, the mission file format, the terrain profile and the tile maths (`./gradlew :msp:test`).
 
 ## Requirements
 
 - Android 8.0 (API 26) or newer.
-- A USB OTG cable to connect the FC. The FC's USB port must show up as a serial device, which is the default.
+- A USB OTG cable to connect the FC, or its Bluetooth module (the FC's Bluetooth UART needs MSP enabled in the Configurator's Ports tab). The USB port must show up as a serial device, which is the default.
 - INAV 9.x. Developed against 9.1; other versions are untested.
 
 ## Install
@@ -74,7 +76,7 @@ You need a JDK 17 or newer to run Gradle and the Android SDK (platform 36); put 
 1. **Plan.** Tap the map to add points. Select one to change its type, altitude or other parameters in the **Point** tab; the **List** tab shows the mission as the FC stores it.
 2. **Set home.** *More ▸ Set home at map center* (or at your position after **Locate**). Relative altitudes count from the take-off point, so this makes the **Profile** tab accurate. Without it, home is assumed at point 1.
 3. **Check the Profile tab.** Look for the red stretches and the warning.
-4. **Connect and upload.** Plug the FC in over OTG and press **Upload & save**. Then **Download** it again, or open it in the Configurator, to confirm it is what you planned.
+4. **Connect and upload.** Plug the FC in over OTG, or choose its module in *More ▸ Bluetooth connection* (scan, tap the device, and it tests the link). Then press **Upload & save**. If Bluetooth is selected it is used when no cable is plugged in; a checkbox makes it win even with a cable. Then **Download** it again, or open it in the Configurator, to confirm it is what you planned.
 
 **Satellite imagery** needs an account of your own. Tap **Satellite**, choose MapTiler, Mapbox or a custom tile URL (`https://…/{z}/{x}/{y}`), and paste the key. It is stored on the phone only and is excluded from Android backups. Providers set their own limits, including whether tiles may be saved for offline use; the offline dialog asks you to confirm you checked.
 
@@ -90,7 +92,7 @@ There are no accounts, ads or analytics. The app talks to these services:
 | Your satellite provider | The tile area you look at and your key | Satellite imagery, only if you set it up |
 | `api.open-meteo.com` | The coordinates of your route and of your home point (which can be your own position if you set it from Locate) | Terrain heights for the Profile tab. Results are cached on the phone |
 
-Location permission is used only when you press **Locate**. Your position is used on the device to centre the map and is not sent anywhere by the app. Missions, settings and the cache stay on the phone.
+Location permission is used only when you press **Locate**. Bluetooth needs the *Nearby devices* permission (or location on Android 11 and older) to find and talk to the module; the app does not derive your position from it. Your position is used on the device to centre the map and is not sent anywhere by the app. Missions, settings and the cache stay on the phone.
 
 ## Third-party data and terms
 
@@ -107,7 +109,6 @@ Protocol behaviour and the file format were checked against the INAV firmware an
 
 ## Limitations
 
-- No Bluetooth yet (USB only).
 - The mission is shown as the flat list the FC stores. The Configurator instead groups RTH, Jump and Set Head under the previous map point, so point numbers can differ by those entries.
 - Only the first mission of a multi-mission file is opened. "PosHold unlimited" is not supported (INAV 9 does not have it).
 - MSP v1 only. Fixed-wing landing approaches, safe homes and VTOL options are not edited.
