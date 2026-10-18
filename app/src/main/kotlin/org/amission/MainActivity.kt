@@ -66,7 +66,10 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import org.amission.msp.AltitudeMode
 import org.amission.msp.GpsFix
+import org.amission.msp.GroundHeight
 import org.amission.msp.FlightProfileBuilder
 import org.amission.msp.Geo
 import org.amission.msp.MissionCheck
@@ -265,6 +268,7 @@ class MissionViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Recomputes the terrain profile shortly after the last change, so typing an altitude does not spam lookups. */
     private fun scheduleProfile() {
+        scheduleGround()
         profileJob?.cancel()
         val path = waypoints.filter { it.action.isFlownTo }
             .map { PathVertex(it.number, it.latitude, it.longitude, it.altitudeCm / 100.0, it.isSeaLevelRef) }
@@ -327,6 +331,7 @@ class MissionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun saveToFile(uri: Uri) {
+        exportBlocker()?.let { status = it; return }
         val xml = missionXml()
         viewModelScope.launch {
             try {
@@ -475,6 +480,103 @@ class MissionViewModel(app: Application) : AndroidViewModel(app) {
         status = "Moved point ${index + 1}"
     }
 
+    // ---- altitude measured from the ground under a point ("Ground" mode) ----
+
+    var groundStatus by mutableStateOf(GroundStatus.IDLE)
+        private set
+
+    private var groundJob: Job? = null
+
+    private fun homeKeyNow(): String = GroundHeight.homeKey(home, waypoints.firstOrNull { it.action.hasPosition })
+
+    /** The point that altitudes count from: the planned home, or point 1 when no home is set. */
+    private fun homeRefPoint(): Pair<Double, Double>? =
+        home ?: waypoints.firstOrNull { it.action.hasPosition }?.let { it.latitude to it.longitude }
+
+    /** Ground-mode points whose stored altitude is out of date and must be converted again. */
+    fun pendingGround(): List<Waypoint> {
+        val key = homeKeyNow()
+        return waypoints.filter { it.action.hasPosition && !GroundHeight.isResolved(it, key) }
+    }
+
+    /** True when this point is not in ground mode, or its stored altitude is current. */
+    fun isGroundResolved(w: Waypoint): Boolean = GroundHeight.isResolved(w, homeKeyNow())
+
+    /**
+     * Converts every out-of-date ground-mode point into the home-relative altitude INAV needs, using terrain heights.
+     * The lookup needs internet unless those heights were fetched before (they are kept on the phone).
+     */
+    private fun scheduleGround() {
+        groundJob?.cancel()
+        val key = homeKeyNow()
+        val ref = homeRefPoint()
+        val pending = waypoints.withIndex().filter { it.value.action.hasPosition && !GroundHeight.isResolved(it.value, key) }
+        if (pending.isEmpty() || ref == null) { groundStatus = GroundStatus.IDLE; return }
+        groundJob = viewModelScope.launch {
+            // Stay "unavailable" while retrying, so the screen does not flicker between the two.
+            if (groundStatus != GroundStatus.UNAVAILABLE) groundStatus = GroundStatus.LOOKING
+            delay(400)
+            val heights = ElevationService.elevations(listOf(ref) + pending.map { it.value.latitude to it.value.longitude })
+            if (heights.any { it == null }) {
+                // No internet (or the service is down). Keep trying while the app is open: the connection may come back.
+                groundStatus = GroundStatus.UNAVAILABLE
+                delay(GROUND_RETRY_MS)
+                scheduleGround()
+                return@launch
+            }
+            if (homeKeyNow() != key) { scheduleGround(); return@launch } // home changed while looking up: start over
+            val homeElevation = heights[0]!!
+            val current = waypoints.toMutableList()
+            pending.forEachIndexed { n, (i, w) ->
+                val now = current.getOrNull(i) ?: return@forEachIndexed
+                // Only convert points that did not change during the lookup; a changed point is handled by the next pass.
+                if (now.latE7 == w.latE7 && now.lonE7 == w.lonE7 && now.groundHeightM == w.groundHeightM) {
+                    current[i] = GroundHeight.resolve(now, heights[n + 1]!!, homeElevation, key)
+                }
+            }
+            groundStatus = GroundStatus.IDLE
+            update(current)
+        }
+    }
+
+    /** Why the mission cannot be uploaded, saved or shared right now, or null if it can. */
+    fun exportBlocker(): String? {
+        if (pendingGround().isEmpty()) return null
+        return when (groundStatus) {
+            GroundStatus.LOOKING -> "Ground heights are still being looked up. Wait a moment and try again."
+            GroundStatus.UNAVAILABLE ->
+                "Some points are set to Ground and their ground heights could not be looked up. That needs internet the " +
+                    "first time. Connect to the internet, or switch those points to Home."
+            GroundStatus.IDLE -> "Ground heights are not ready yet. Wait a moment and try again."
+        }
+    }
+
+    /** Changes what the selected point's altitude is measured from, keeping its real height where that can be worked out. */
+    fun setAltitudeMode(mode: AltitudeMode) {
+        val i = selected ?: return
+        val before = waypoints.getOrNull(i) ?: return
+        if (before.altitudeMode == mode) return
+        viewModelScope.launch {
+            val ref = homeRefPoint()
+            // Cached heights answer at once; a slow or missing connection must not freeze the switch.
+            val heights = if (ref != null) {
+                withTimeoutOrNull(2_000) { ElevationService.elevations(listOf(ref, before.latitude to before.longitude)) }
+            } else {
+                null
+            }
+            val now = waypoints.getOrNull(i) ?: return@launch
+            if (now.latE7 != before.latE7 || now.lonE7 != before.lonE7 || now.altitudeMode != before.altitudeMode) return@launch
+            val switched = GroundHeight.switchMode(now, mode, heights?.getOrNull(0), heights?.getOrNull(1), homeKeyNow())
+            update(waypoints.toMutableList().also { it[i] = switched })
+            status = when (mode) {
+                AltitudeMode.GROUND ->
+                    "Ground mode works online only: ground heights are looked up on the internet the first time, then kept on this phone."
+                AltitudeMode.SEA_LEVEL -> "Altitude is now measured from sea level."
+                AltitudeMode.HOME -> "Altitude is now measured from the take-off point."
+            }
+        }
+    }
+
     fun updateSelected(change: (Waypoint) -> Waypoint) {
         val i = selected ?: return
         update(waypoints.toMutableList().also { it[i] = change(it[i]) })
@@ -493,7 +595,10 @@ class MissionViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (!action.hasPosition) {
             // Positionless actions are sent with zeroed coordinates; RTH keeps its altitude.
-            w.copy(latE7 = 0, lonE7 = 0, altitudeCm = if (action == WaypointAction.RTH) old.altitudeCm else 0, p3 = 0)
+            w.copy(
+                latE7 = 0, lonE7 = 0, altitudeCm = if (action == WaypointAction.RTH) old.altitudeCm else 0, p3 = 0,
+                groundHeightM = null, groundBasis = null, // no height, so nothing to measure from the ground
+            )
         } else if (!old.action.hasPosition && centre != null) {
             w.copy(latE7 = (centre.first * 1e7).roundToInt(), lonE7 = (centre.second * 1e7).roundToInt(),
                 altitudeCm = if (old.altitudeCm != 0) old.altitudeCm else defaultAltM * 100)
@@ -507,10 +612,14 @@ class MissionViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clear() = update(emptyList(), sel = null)
 
-    fun uploadToFc(saveToEeprom: Boolean) = withFc("Uploading…") { client ->
-        client.uploadAndVerify(waypoints)
-        if (saveToEeprom) client.saveToEeprom()
-        if (saveToEeprom) "Uploaded, verified and saved to FC" else "Uploaded and verified (not saved to EEPROM)"
+    fun uploadToFc(saveToEeprom: Boolean) {
+        // Never upload a guess: points set to Ground must have been converted from real terrain heights first.
+        exportBlocker()?.let { status = it; return }
+        withFc("Uploading…") { client ->
+            client.uploadAndVerify(waypoints)
+            if (saveToEeprom) client.saveToEeprom()
+            if (saveToEeprom) "Uploaded, verified and saved to FC" else "Uploaded and verified (not saved to EEPROM)"
+        }
     }
 
     /** Reads the FC's mission, loading its saved (EEPROM) mission first if working memory is empty. */
@@ -685,7 +794,7 @@ private fun MissionScreen(vm: MissionViewModel = viewModel()) {
             Text(
                 vm.status,
                 style = MaterialTheme.typography.bodySmall,
-                maxLines = 2,
+                maxLines = 3,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
             )
             ActionBar(
@@ -693,9 +802,9 @@ private fun MissionScreen(vm: MissionViewModel = viewModel()) {
                 // A download replaces the local mission, so ask first if there is one.
                 onDownload = { if (vm.waypoints.isEmpty()) vm.downloadFromFc() else confirmDownload = true },
                 onClear = { confirmClear = true },
-                onSaveFile = { saveFile.launch(MissionFiles.suggestedName()) },
+                onSaveFile = { vm.exportBlocker()?.let(vm::reportStatus) ?: saveFile.launch(MissionFiles.suggestedName()) },
                 onOpenFile = { openFile.launch(arrayOf("*/*")) },
-                onShare = { context.startActivity(MissionFiles.shareChooser(context, vm.missionXml())) },
+                onShare = { vm.exportBlocker()?.let(vm::reportStatus) ?: context.startActivity(MissionFiles.shareChooser(context, vm.missionXml())) },
                 onAbout = { showAbout = true },
                 onBluetooth = { showBluetooth = true },
                 onHome = { showHome = true },
@@ -975,3 +1084,9 @@ private fun PanelHandle(onDrag: (dyPx: Float) -> Unit, onDragEnd: () -> Unit) {
         )
     }
 }
+
+/** Progress of converting "above ground" points into the altitude INAV stores. */
+enum class GroundStatus { IDLE, LOOKING, UNAVAILABLE }
+
+/** How often the app tries again to look up ground heights after a failure. */
+private const val GROUND_RETRY_MS = 15_000L

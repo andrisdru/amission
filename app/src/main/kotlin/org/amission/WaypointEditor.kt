@@ -35,7 +35,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import org.amission.msp.AltitudeMode
 import org.amission.msp.Geo
+import org.amission.msp.GroundHeight
 import org.amission.msp.Waypoint
 import org.amission.msp.WaypointAction
 import java.util.Locale
@@ -80,10 +83,63 @@ private fun PositionFields(vm: MissionViewModel, wp: Waypoint) {
     NumberField("Lon:", formatCoord(wp.lonE7)) { s ->
         s.toDoubleOrNull()?.takeIf { it in -180.0..180.0 }?.let { v -> vm.updateSelected { it.copy(lonE7 = (v * 1e7).roundToInt()) } }
     }
-    AltitudeFields(vm, wp)
-    SeaLevelRow(vm, wp)
+    AltitudeModeRow(vm, wp)
+    if (wp.altitudeMode == AltitudeMode.GROUND) GroundFields(vm, wp) else AltitudeFields(vm, wp)
     ElevationRow(wp)
     GroundDistanceRow(vm, wp)
+}
+
+/** What the altitude is measured from: the take-off point (default), sea level, or the ground under the point. */
+@Composable
+private fun AltitudeModeRow(vm: MissionViewModel, wp: Waypoint) {
+    LabeledRow("Height from:") {
+        Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf(AltitudeMode.HOME to "Home", AltitudeMode.SEA_LEVEL to "Sea level", AltitudeMode.GROUND to "Ground").forEach { (mode, label) ->
+                FilterChip(
+                    selected = wp.altitudeMode == mode,
+                    onClick = { vm.setAltitudeMode(mode) },
+                    label = { Text(label, Modifier.fillMaxWidth(), textAlign = TextAlign.Center, maxLines = 2, fontSize = 13.sp) },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Height above the ground under the point. INAV only knows "above the take-off point" and "above sea level", so this is
+ * converted using terrain heights, which come from the internet the first time (then they are kept on the phone).
+ */
+@Composable
+private fun GroundFields(vm: MissionViewModel, wp: Waypoint) {
+    NumberField("Above ground (m):", (wp.groundHeightM ?: 0).toString(), intOnly = true) { s ->
+        s.toIntOrNull()?.takeIf { it in GroundHeight.MIN_GROUND_M..GroundHeight.MAX_GROUND_M }
+            ?.let { v -> vm.updateSelected { it.copy(groundHeightM = v, groundBasis = null) } }
+    }
+    val resolved = vm.isGroundResolved(wp)
+    val problem = !resolved && vm.groundStatus == GroundStatus.UNAVAILABLE
+    LabeledRow("Stored as:") {
+        Text(
+            when {
+                resolved -> "${formatMeters(wp.altitudeCm)} above take-off"
+                problem -> "waiting for internet (keeps trying)"
+                else -> "looking up the ground…"
+            },
+            color = if (problem) MaterialTheme.colorScheme.error else Color.Unspecified,
+        )
+    }
+    Text(
+        "⚠ Ground works online only. The ground height under each point is looked up on the internet the first time and " +
+            "then kept on this phone. Until it is known, this mission cannot be uploaded or saved.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.error,
+    )
+    Text(
+        "The quad flies the converted number as a fixed height, it does not follow the ground. Terrain data is bare " +
+            "ground at about 90 m resolution, without trees or buildings.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 @Composable
@@ -206,7 +262,7 @@ private fun TypeRow(current: WaypointAction, onSelect: (WaypointAction) -> Unit)
 }
 
 @Composable
-private fun LabeledRow(label: String, content: @Composable () -> Unit) {
+private fun LabeledRow(label: String, content: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
         Text(label, Modifier.width(LabelWidth))
         content()

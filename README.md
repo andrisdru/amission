@@ -12,7 +12,7 @@ amission is not affiliated with or endorsed by the INAV project.
 **Plan missions on a map, with or without a quad connected**
 - Tap the map to add waypoints, tap a marker to edit it, and the mission is saved on the phone as you go.
 - All seven INAV waypoint types (Waypoint, PosHold Time, RTH, Set POI, Jump, Set Head, Land) with the same parameters as the Configurator: speed, hold time, land after RTH, jump target and repeat count, heading, and the four user-action flags.
-- Altitude relative to take-off, or above sea level. New points start at a default altitude you can change (80 m out of the box).
+- Altitude measured from the take-off point (default), from sea level, or as height above the ground under each point. The ground option needs internet the first time (it looks up terrain heights, then keeps them on the phone); a mission with an unresolved ground height cannot be uploaded or saved. New points start at a default altitude you can change (80 m out of the box).
 
 **Talk to the flight controller**
 - USB (OTG) or Bluetooth connection (BLE modules such as the one on the GEPRC TAKER H743 BT; Classic SPP modules are supported but untested). Download the mission from the FC, including the one saved in its EEPROM, and upload with an automatic read-back check. Upload saves to EEPROM by default.

@@ -33,7 +33,11 @@ class MissionStore(context: Context) {
                     put(JSONObject()
                         .put("action", w.action.name)
                         .put("latE7", w.latE7).put("lonE7", w.lonE7).put("altCm", w.altitudeCm)
-                        .put("p1", w.p1).put("p2", w.p2).put("p3", w.p3))
+                        .put("p1", w.p1).put("p2", w.p2).put("p3", w.p3)
+                        .apply {
+                            w.groundHeightM?.let { put("groundM", it) }
+                            w.groundBasis?.let { put("groundBasis", it) }
+                        })
                 }
             })
             if (home != null) put("home", JSONObject().put("lat", home.first).put("lon", home.second))
@@ -56,6 +60,8 @@ class MissionStore(context: Context) {
                 latE7 = o.getInt("latE7"), lonE7 = o.getInt("lonE7"), altitudeCm = o.getInt("altCm"),
                 p1 = o.optInt("p1"), p2 = o.optInt("p2"), p3 = o.optInt("p3"),
                 isLast = i == arr.length() - 1,
+                groundHeightM = if (o.has("groundM")) o.getInt("groundM") else null,
+                groundBasis = o.optString("groundBasis").ifEmpty { null },
             )
         }
     }
