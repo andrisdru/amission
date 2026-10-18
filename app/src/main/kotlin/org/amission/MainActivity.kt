@@ -3,7 +3,9 @@ package org.amission
 import android.app.Application
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -43,6 +45,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -50,8 +53,10 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.amission.msp.GpsFix
 import org.amission.msp.MissionClient
 import org.amission.msp.SerialMspLink
+import org.amission.msp.TelemetryClient
 import org.amission.msp.Waypoint
 import org.amission.msp.WaypointAction
 import kotlin.math.roundToInt
@@ -131,6 +136,76 @@ class MissionViewModel(app: Application) : AndroidViewModel(app) {
         val rth = Waypoint(number = 0, action = WaypointAction.RTH, latE7 = 0, lonE7 = 0, altitudeCm = alt)
         update(waypoints + rth, sel = waypoints.size)
         status = "Added RTH as point ${waypoints.size}"
+    }
+
+    /** Latest position to centre on, with a marker; set by [locate]. */
+    var locateResult by mutableStateOf<LocateResult?>(null)
+        private set
+    var locating by mutableStateOf(false)
+        private set
+    private var locateId = 0
+
+    private sealed interface QuadGps {
+        data class Fix(val gps: GpsFix) : QuadGps
+        data class NoFix(val gps: GpsFix) : QuadGps
+        data class Failed(val reason: String) : QuadGps
+        data object NoDevice : QuadGps
+    }
+
+    /**
+     * Centres the map on the quad's GPS when it is plugged in and reports a real fix, otherwise on
+     * the phone's GPS. A quad powered only over USB often has no fix yet, so that is a normal case,
+     * not an error.
+     */
+    fun locate() {
+        if (locating) return
+        viewModelScope.launch {
+            locating = true
+            status = "Finding position…"
+            try {
+                val quad = if (busy) QuadGps.NoDevice else readQuadGps()
+                if (quad is QuadGps.Fix) {
+                    val g = quad.gps
+                    locateResult = LocateResult(g.latitude, g.longitude, "quad GPS (${g.satellites} satellites)", ++locateId)
+                    status = "Centered on the quad's GPS (${g.satellites} satellites)"
+                    return@launch
+                }
+                val why = when (quad) {
+                    is QuadGps.NoFix -> "Quad has no GPS fix yet (${quad.gps.satellites} satellites). "
+                    is QuadGps.Failed -> "Could not read the quad's GPS (${quad.reason}). "
+                    else -> ""
+                }
+                val phone = PhoneLocation.current(getApplication())
+                if (phone != null) {
+                    locateResult = LocateResult(phone.latitude, phone.longitude, "phone GPS", ++locateId)
+                    status = why + "Centered on the phone's GPS."
+                } else {
+                    val reason = if (PhoneLocation.hasPermission(getApplication())) {
+                        "Phone location is unavailable. Turn on location services, or go outside."
+                    } else {
+                        "Allow location access to use the phone's GPS."
+                    }
+                    status = why + reason
+                }
+            } finally {
+                locating = false
+            }
+        }
+    }
+
+    private suspend fun readQuadGps(): QuadGps {
+        val app = getApplication<Application>()
+        if (!UsbSerialChannel.isDeviceAttached(app)) return QuadGps.NoDevice
+        return try {
+            UsbSerialChannel.open(app).use { channel ->
+                withContext(Dispatchers.IO) {
+                    val gps = TelemetryClient(SerialMspLink(channel, timeoutMs = 1000, retries = 1)).gps()
+                    if (gps.isUsable) QuadGps.Fix(gps) else QuadGps.NoFix(gps)
+                }
+            }
+        } catch (e: Exception) {
+            QuadGps.Failed(e.message ?: "error")
+        }
     }
 
     fun addAtMapCenter() {
@@ -241,6 +316,8 @@ private fun MissionScreen(vm: MissionViewModel = viewModel()) {
 
     var showMapSettings by remember { mutableStateOf(false) }
     var showOffline by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val locationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { vm.locate() }
     var openedForSatellite by remember { mutableStateOf(false) }
     val mapStyle = remember(vm.mapConfig) { MapStyles.styleFor(vm.mapConfig) }
 
@@ -254,6 +331,7 @@ private fun MissionScreen(vm: MissionViewModel = viewModel()) {
                 onViewportChanged = vm::onViewportChanged,
                 mapStyle = mapStyle,
                 fitRequest = vm.fitRequest,
+                locate = vm.locateResult,
                 modifier = Modifier.fillMaxSize(),
             )
             FlowRow(
@@ -279,6 +357,16 @@ private fun MissionScreen(vm: MissionViewModel = viewModel()) {
                         }
                     },
                     label = { Text("Satellite") },
+                    colors = overlayChipColors(),
+                )
+                FilterChip(
+                    selected = false,
+                    onClick = {
+                        // Ask once; either way try, because the quad's GPS needs no phone permission.
+                        if (PhoneLocation.hasPermission(context)) vm.locate() else locationPermission.launch(PhoneLocation.permissions)
+                    },
+                    label = { Text("Locate") },
+                    enabled = !vm.locating,
                     colors = overlayChipColors(),
                 )
                 FilterChip(
@@ -392,18 +480,18 @@ private fun ActionBar(vm: MissionViewModel, onDownload: () -> Unit, onClear: () 
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Button(
-            onClick = { vm.uploadToFc(saveToEeprom = false) },
+            onClick = { vm.uploadToFc(saveToEeprom = true) },
             enabled = !vm.busy && vm.waypoints.isNotEmpty(),
             modifier = Modifier.weight(1f),
-        ) { Text("Upload") }
+        ) { Text("Upload & save") }
         OutlinedButton(onClick = onDownload, enabled = !vm.busy, modifier = Modifier.weight(1f)) { Text("Download") }
         Box {
             TextButton(onClick = { menu = true }) { Text("More ▾") }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 DropdownMenuItem(
-                    text = { Text("Upload and save to FC") },
+                    text = { Text("Upload without saving (FC memory only)") },
                     enabled = !vm.busy && vm.waypoints.isNotEmpty(),
-                    onClick = { menu = false; vm.uploadToFc(saveToEeprom = true) },
+                    onClick = { menu = false; vm.uploadToFc(saveToEeprom = false) },
                 )
                 DropdownMenuItem(
                     text = { Text("Add RTH at end") },

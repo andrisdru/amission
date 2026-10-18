@@ -27,6 +27,12 @@ class UsbSerialChannel private constructor(private val port: UsbSerialPort) : By
         private const val WRITE_TIMEOUT_MS = 1000
         private const val ACTION_USB_PERMISSION = "org.amission.USB_PERMISSION"
 
+        /** True when a USB serial device (a quad) is plugged in, whether or not permission was granted yet. */
+        fun isDeviceAttached(context: Context): Boolean {
+            val manager = context.getSystemService(Context.USB_SERVICE) as UsbManager
+            return UsbSerialProber.getDefaultProber().findAllDrivers(manager).isNotEmpty()
+        }
+
         /** Finds the first attached serial device, asks for permission if needed, and opens it at [baud]. */
         suspend fun open(context: Context, baud: Int = 115200): UsbSerialChannel {
             val manager = context.getSystemService(Context.USB_SERVICE) as UsbManager

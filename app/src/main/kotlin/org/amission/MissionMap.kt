@@ -25,7 +25,12 @@ import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
 import org.maplibre.android.style.expressions.Expression.get
+import org.maplibre.android.style.layers.CircleLayer
 import org.maplibre.android.style.layers.LineLayer
+import org.maplibre.android.style.layers.PropertyFactory.circleColor
+import org.maplibre.android.style.layers.PropertyFactory.circleRadius
+import org.maplibre.android.style.layers.PropertyFactory.circleStrokeColor
+import org.maplibre.android.style.layers.PropertyFactory.circleStrokeWidth
 import org.maplibre.android.style.layers.PropertyFactory.iconAllowOverlap
 import org.maplibre.android.style.layers.PropertyFactory.iconIgnorePlacement
 import org.maplibre.android.style.layers.PropertyFactory.iconImage
@@ -43,6 +48,7 @@ import org.maplibre.geojson.Point
 
 private const val SRC_POINTS = "wp-points"
 private const val SRC_LINE = "wp-line"
+private const val SRC_ME = "me-position"
 private const val LAYER_POINTS = "wp-points-layer"
 
 /** MapLibre map showing the mission. Tapping empty map adds a waypoint; tapping a waypoint selects it. */
@@ -55,6 +61,7 @@ fun MissionMap(
     onViewportChanged: (Viewport) -> Unit,
     mapStyle: MapStyle,
     fitRequest: Int,
+    locate: LocateResult?,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -117,6 +124,13 @@ fun MissionMap(
         }
     }
 
+    // Centre on a located position (quad or phone GPS), keeping the current zoom if it is already close.
+    LaunchedEffect(map, locate?.id) {
+        val m = map ?: return@LaunchedEffect
+        val l = locate ?: return@LaunchedEffect
+        m.easeCamera(CameraUpdateFactory.newLatLngZoom(LatLng(l.lat, l.lon), maxOf(m.cameraPosition.zoom, 16.0)))
+    }
+
     // Initial style and every layer switch: replacing the style drops our mission layers, so re-add them.
     LaunchedEffect(map, mapStyle) {
         val m = map ?: return@LaunchedEffect
@@ -133,7 +147,7 @@ fun MissionMap(
 
     AndroidView(factory = { mapView }, modifier = modifier) {
         val m = map
-        if (m != null && styleReady) m.getStyle { updateMission(it, markers, waypoints, selected) }
+        if (m != null && styleReady) m.getStyle { updateMission(it, markers, waypoints, selected, locate) }
     }
 }
 
@@ -145,6 +159,12 @@ private fun createMapView(context: Context): MapView {
 private fun addMissionLayers(style: Style) {
     style.addSource(GeoJsonSource(SRC_LINE))
     style.addSource(GeoJsonSource(SRC_POINTS))
+    style.addSource(GeoJsonSource(SRC_ME))
+    style.addLayer(
+        CircleLayer("me-layer", SRC_ME).withProperties(
+            circleRadius(9f), circleColor("#1E88E5"), circleStrokeColor("#ffffff"), circleStrokeWidth(3f),
+        )
+    )
     style.addLayer(LineLayer("wp-line-layer", SRC_LINE).withProperties(lineColor("#e53935"), lineWidth(3f)))
     // Markers are drawn from generated bitmaps, not map text, so they never depend on font glyphs
     // that might not be in the offline cache.
@@ -157,7 +177,10 @@ private fun addMissionLayers(style: Style) {
     )
 }
 
-private fun updateMission(style: Style, markers: MarkerBitmaps, waypoints: List<Waypoint>, selected: Int?) {
+private fun updateMission(style: Style, markers: MarkerBitmaps, waypoints: List<Waypoint>, selected: Int?, me: LocateResult?) {
+    style.getSourceAs<GeoJsonSource>(SRC_ME)?.setGeoJson(
+        if (me != null) FeatureCollection.fromFeature(Feature.fromGeometry(Point.fromLngLat(me.lon, me.lat))) else FeatureCollection.fromFeatures(emptyList<Feature>())
+    )
     // Jump / Set Head / RTH have no position of their own, so they are not drawn.
     val positioned = waypoints.withIndex().filter { it.value.action.hasPosition }
     val points = positioned.map { (i, w) ->
