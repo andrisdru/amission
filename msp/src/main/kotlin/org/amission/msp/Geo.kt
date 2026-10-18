@@ -40,6 +40,17 @@ object TileMath {
 object Geo {
     private const val EARTH_RADIUS_M = 6_371_000.0
 
+    /** Wraps a longitude into -180..180, as a map shows the world repeated side by side. */
+    fun normalizeLongitude(lon: Double): Double {
+        if (!lon.isFinite()) return 0.0
+        var l = (lon + 180.0) % 360.0
+        if (l < 0) l += 360.0
+        return l - 180.0
+    }
+
+    /** Keeps a latitude on the map: Web Mercator stops at about 85 degrees, and a waypoint cannot be past 90. */
+    fun clampLatitude(lat: Double): Double = if (lat.isFinite()) lat.coerceIn(-85.0, 85.0) else 0.0
+
     /** Great-circle (haversine) distance in metres. */
     fun distanceMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
         val p1 = Math.toRadians(lat1)

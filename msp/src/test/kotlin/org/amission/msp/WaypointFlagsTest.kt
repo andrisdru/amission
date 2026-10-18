@@ -54,3 +54,23 @@ class FlownToTest {
         assertFalse(WaypointAction.SET_HEAD.isFlownTo)
     }
 }
+
+class GeoClampTest {
+    @Test
+    fun longitudeWrapsIntoRange() {
+        assertEquals(11.0, Geo.normalizeLongitude(11.0), 1e-9)
+        assertEquals(-170.0, Geo.normalizeLongitude(190.0), 1e-9)
+        assertEquals(170.0, Geo.normalizeLongitude(-190.0), 1e-9)
+        assertEquals(10.0, Geo.normalizeLongitude(370.0), 1e-9)
+        assertEquals(-180.0, Geo.normalizeLongitude(180.0), 1e-9)
+        assertEquals(0.0, Geo.normalizeLongitude(Double.NaN), 1e-9)
+    }
+
+    @Test
+    fun latitudeIsClamped() {
+        assertEquals(85.0, Geo.clampLatitude(89.9), 1e-9)
+        assertEquals(-85.0, Geo.clampLatitude(-120.0), 1e-9)
+        assertEquals(48.0, Geo.clampLatitude(48.0), 1e-9)
+        assertEquals(0.0, Geo.clampLatitude(Double.POSITIVE_INFINITY), 1e-9)
+    }
+}
