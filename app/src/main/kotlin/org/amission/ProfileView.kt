@@ -57,7 +57,7 @@ fun ProfileTab(vm: MissionViewModel) {
             is ProfileState.Ready -> ProfileContent(state, vm)
         }
         Text(
-            "Heights above ground use terrain data of about 90 m resolution. Trees, buildings and masts are " +
+            "Terrain heights: Open-Meteo.com (CC BY 4.0), from the Copernicus DEM. Heights above ground use terrain data of about 90 m resolution. Trees, buildings and masts are " +
                 "not included, so keep a margin. Relative altitudes count from the take-off point.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,

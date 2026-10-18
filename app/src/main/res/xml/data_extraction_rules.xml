@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+ backup and device-transfer rules. The mission itself (current_mission.json) is kept. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="amission_map.xml" />
+        <exclude domain="file" path="mbgl-offline.db" />
+        <exclude domain="file" path="elevation_cache.json" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" path="mbgl-offline.db" />
+        <exclude domain="file" path="elevation_cache.json" />
+    </device-transfer>
+</data-extraction-rules>

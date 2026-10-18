@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 11 and older cloud backup. -->
+<full-backup-content>
+    <!-- The user's own map provider key must not leave the phone in a cloud backup. -->
+    <exclude domain="sharedpref" path="amission_map.xml" />
+    <!-- Large and re-creatable. -->
+    <exclude domain="file" path="mbgl-offline.db" />
+    <exclude domain="file" path="elevation_cache.json" />
+</full-backup-content>

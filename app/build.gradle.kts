@@ -36,6 +36,8 @@ dependencies {
     implementation("com.github.mik3y:usb-serial-for-android:3.9.0")
 
     implementation("org.maplibre.gl:android-sdk:11.13.5")
+    // MapLibre ships OkHttp at runtime only; it is needed here to set the User-Agent and limit parallel tile requests.
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     implementation(platform("androidx.compose:compose-bom:2025.09.00"))
     implementation("androidx.compose.material3:material3")

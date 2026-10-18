@@ -472,6 +472,7 @@ private fun MissionScreen(vm: MissionViewModel = viewModel()) {
 
     var showMapSettings by remember { mutableStateOf(false) }
     var showOffline by remember { mutableStateOf(false) }
+    var showAbout by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val locationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { vm.locate() }
     val saveFile = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(MissionFiles.CREATE_MIME)) { uri -> if (uri != null) vm.saveToFile(uri) }
@@ -564,6 +565,7 @@ private fun MissionScreen(vm: MissionViewModel = viewModel()) {
                 onSaveFile = { saveFile.launch(MissionFiles.suggestedName()) },
                 onOpenFile = { openFile.launch(arrayOf("*/*")) },
                 onShare = { context.startActivity(MissionFiles.shareChooser(context, vm.missionXml())) },
+                onAbout = { showAbout = true },
                 onUpload = { save ->
                     // Low clearance is a warning, not a block: ask once, then let the user decide.
                     if (vm.hasClearanceIssues) pendingUpload = save else vm.uploadToFc(save)
@@ -627,6 +629,7 @@ private fun MissionScreen(vm: MissionViewModel = viewModel()) {
     }
 
     if (showOffline) OfflineMapsDialog(vm, onDismiss = { showOffline = false })
+    if (showAbout) AboutDialog(onDismiss = { showAbout = false })
 
     pendingUpload?.let { save ->
         val worst = (vm.profile as? ProfileState.Ready)?.profile?.issues?.minByOrNull { it.lowestAglM }
@@ -687,6 +690,7 @@ private fun ActionBar(
     onOpenFile: () -> Unit,
     onShare: () -> Unit,
     onUpload: (saveToEeprom: Boolean) -> Unit,
+    onAbout: () -> Unit,
 ) {
     var menu by remember { mutableStateOf(false) }
     Row(
@@ -740,6 +744,10 @@ private fun ActionBar(
                     text = { Text("Add RTH at end") },
                     enabled = vm.waypoints.isNotEmpty(),
                     onClick = { menu = false; vm.addRthAtEnd() },
+                )
+                DropdownMenuItem(
+                    text = { Text("About, licence and credits") },
+                    onClick = { menu = false; onAbout() },
                 )
                 DropdownMenuItem(
                     text = { Text("Clear mission") },

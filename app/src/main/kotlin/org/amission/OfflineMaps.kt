@@ -32,7 +32,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import org.amission.msp.TileMath
 import org.json.JSONObject
-import org.maplibre.android.MapLibre
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.geometry.LatLngBounds
 import org.maplibre.android.offline.OfflineManager
@@ -81,7 +80,7 @@ class OfflineMaps(private val context: Context) {
     private var active: OfflineRegion? = null
 
     private val manager: OfflineManager by lazy {
-        MapLibre.getInstance(context)
+        MapSdk.init(context)
         OfflineManager.getInstance(context)
     }
 
@@ -197,9 +196,14 @@ class OfflineMaps(private val context: Context) {
 
 private fun formatMb(bytes: Long): String = String.format(Locale.US, "%.1f MB", bytes / 1_048_576.0)
 
-private const val MAX_TILES = 25_000L
-// Rough averages, used only for the size preview. Real size depends on the area and the provider.
-private const val STREET_KB_PER_TILE = 30
+// Satellite imagery limits are the user's provider's business; this only stops runaway downloads.
+private const val MAX_SATELLITE_TILES = 25_000L
+// OpenFreeMap's terms (checked 2026-10) allow an app to offer offline areas of at most 3,000 tiles or 50 MB per
+// download, with at most 4 parallel requests and an identifying User-Agent (see MapSdk).
+private const val MAX_STREET_TILES = 3_000L
+private const val MAX_STREET_MB = 50.0
+// Rough averages for the size preview: measured 22 KB per tile in rural land (max 35 KB); built-up areas are larger.
+private const val STREET_KB_PER_TILE = 40
 private const val SATELLITE_KB_PER_TILE = 40
 // The street vector tiles stop at this zoom; deeper levels are drawn from it, so nothing is gained by fetching more.
 private const val STREET_MAX_ZOOM = 14
@@ -226,7 +230,7 @@ fun OfflineMapsDialog(vm: MissionViewModel, onDismiss: () -> Unit) {
     val tiles = viewport?.let { TileMath.tileCount(it.south, it.west, it.north, it.east, minZoom, maxZoom) } ?: 0L
     val needsFonts = !satellite && offline.regions.none { it.layer == "Street" }
     val estimatedMb = tiles * (if (satellite) SATELLITE_KB_PER_TILE else STREET_KB_PER_TILE) / 1024.0 + if (needsFonts) STREET_FONTS_MB else 0.0
-    val tooBig = tiles > MAX_TILES
+    val tooBig = if (satellite) tiles > MAX_SATELLITE_TILES else tiles > MAX_STREET_TILES || estimatedMb > MAX_STREET_MB
     val downloading = offline.progress != null
     val canStart = viewport != null && !downloading && !tooBig && (!satellite || accepted)
 
@@ -262,7 +266,8 @@ fun OfflineMapsDialog(vm: MissionViewModel, onDismiss: () -> Unit) {
                     }
                     if (tooBig) {
                         Text(
-                            "Too large. Zoom the map in to a smaller area" + if (satellite) " or lower the max zoom." else ".",
+                            if (satellite) "Too large. Zoom the map in to a smaller area or lower the max zoom."
+                            else "Too large for the free street map service (limit $MAX_STREET_TILES tiles or ${MAX_STREET_MB.toInt()} MB per download). Zoom in to a smaller area.",
                             color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall,
                         )
                     }

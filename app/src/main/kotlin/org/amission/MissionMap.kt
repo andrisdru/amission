@@ -20,7 +20,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import org.amission.msp.Waypoint
-import org.maplibre.android.MapLibre
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
@@ -154,7 +153,7 @@ fun MissionMap(
 }
 
 private fun createMapView(context: Context): MapView {
-    MapLibre.getInstance(context)
+    MapSdk.init(context)
     return MapView(context)
 }
 
