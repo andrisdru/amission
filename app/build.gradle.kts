@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -15,9 +17,31 @@ android {
         versionName = "0.1.0"
     }
 
+    // Release signing details live in keystore.properties (git-ignored, see .gitignore). Without that file the
+    // release build is simply left unsigned, so a fresh clone still builds.
+    val keystoreProps = rootProject.file("keystore.properties").takeIf { it.exists() }?.let { file ->
+        Properties().apply { file.inputStream().use { load(it) } }
+    }
+    if (keystoreProps != null) {
+        signingConfigs {
+            create("release") {
+                storeFile = file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            // Phones are arm; the x86 copies of the map engine only serve emulators and add about 25 MB.
+            // Pass -PallAbis to build a release that also runs on an x86 emulator.
+            if (!project.hasProperty("allAbis")) ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            if (keystoreProps != null) signingConfig = signingConfigs.getByName("release")
         }
     }
 

@@ -71,6 +71,8 @@ cd amission
 
 You need a JDK 17 or newer to run Gradle and the Android SDK (platform 36); put the SDK path in `local.properties` as `sdk.dir=...` or open the project in Android Studio. Install `app/build/outputs/apk/debug/app-debug.apk` on the phone.
 
+A signed release build needs your own key: create a keystore, put its path and passwords in a git-ignored `keystore.properties` at the repository root (`storeFile`, `storePassword`, `keyAlias`, `keyPassword`), and run `./gradlew :app:assembleRelease`. Without that file the release is built unsigned. Release builds contain only the arm libraries (about 24 MB); add `-PallAbis` for one that also runs on an x86 emulator. Keep the key and its password safe: an app signed with a different key cannot be installed over an earlier one.
+
 ## Using it
 
 1. **Plan.** Tap the map to add points. Select one to change its type, altitude or other parameters in the **Point** tab; the **List** tab shows the mission as the FC stores it.

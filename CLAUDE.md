@@ -13,6 +13,8 @@ Gradle 9 needs JDK 17 or newer to run. If `JAVA_HOME` points at an older JDK, po
 ./gradlew :msp:test --tests "org.amission.msp.MissionClientTest"       # one test class
 ./gradlew :app:assembleDebug                                           # debug APK
 ./gradlew :app:lintDebug                                               # Android lint (0 errors at last check)
+./gradlew :app:assembleRelease                                         # signed release APK (needs keystore.properties; unsigned without it)
+./gradlew :app:assembleRelease -PallAbis                              # same, but also for x86 emulators (about 25 MB larger)
 ```
 
 ## Architecture

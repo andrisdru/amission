@@ -6,3 +6,8 @@ local.properties
 .kotlin/
 captures/
 .cxx/
+
+# release signing: never commit
+keystore.properties
+*.jks
+*.keystore
