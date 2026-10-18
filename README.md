@@ -57,7 +57,25 @@ Unit tests cover the protocol, the mission file format, the terrain profile and 
 
 - Android 8.0 (API 26) or newer.
 - A USB OTG cable to connect the FC, or its Bluetooth module (the FC's Bluetooth UART needs MSP enabled in the Configurator's Ports tab). The USB port must show up as a serial device, which is the default.
-- INAV 9.x. Developed against 9.1; other versions are untested.
+- INAV 9.x. Tested only on 9.1, on one flight controller. See [INAV versions](#inav-versions) below.
+
+## INAV versions
+
+This was compared against the INAV source of releases 2.6.0 to 9.1.0. Only **9.1 has been tried on hardware** (a GEPRC TAKER H743 BT); everything else here is read from the source, not tested.
+
+| INAV version | Expected to work | Why |
+|---|---|---|
+| **9.0, 9.1** | Yes. 9.1 is tested. | The waypoint commands and format are the same and every feature below exists. |
+| **6.0 to 8.x** | Probably, untested. | Same commands and 21-byte waypoint format; the sea-level switch and the four user actions (waypoint flag bits) are defined from 6.0. |
+| **5.x** | Basic missions only, untested. | Upload and download use the same commands, and the Jump numbering the app relies on is in place from 5.0. The user actions and the sea-level and Ground height modes may not do what the app says, because the 5.0 source names the absolute-altitude flag differently and that has not been traced. |
+| **4.x and older** | Not recommended. | The Jump numbering was not checked, and the newer waypoint flags are missing. |
+| **INAV 10 or later** | Unknown. | Not looked at. Check before relying on it. |
+
+What is the same in every release from 2.6 to 9.x: the set-waypoint, read-waypoint, mission-info, mission save and load, and GPS commands, the 21-byte waypoint, and the end-of-mission flag.
+
+The waypoint limit comes from the flight controller, so the app adapts to it. The source default is 15, and common targets raise it to 120.
+
+Not checked on any version: multi-mission setups (the app reads and writes only the first mission, and how each version treats the mission number in save and load was not checked), and forks or custom firmware.
 
 ## Install
 
