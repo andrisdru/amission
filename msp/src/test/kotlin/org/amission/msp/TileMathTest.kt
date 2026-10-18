@@ -13,23 +13,24 @@ class TileMathTest {
 
     @Test
     fun knownTileIndices() {
-        // Hand-computed from the OSM slippy-map formula: x = (24.10+180)/360*1024 = 580.5, y = 314.x
-        assertEquals(580, TileMath.tileX(24.10, 10))
-        assertEquals(313, TileMath.tileY(56.95, 10))
+        // Hand-computed from the OSM slippy-map formula at zoom 10 for lon 10, lat 50:
+        // x = (10+180)/360*1024 = 540.4, y = 347.3 (tan 50 = 1.1918, sec 50 = 1.5557, ln(2.7475)/pi = 0.3217)
+        assertEquals(540, TileMath.tileX(10.0, 10))
+        assertEquals(347, TileMath.tileY(50.0, 10))
     }
 
     @Test
     fun tileCountGrowsRoughlyFourfoldPerZoom() {
-        val z15 = TileMath.tilesAtZoom(56.0, 24.0, 57.0, 25.0, 15)
-        val z16 = TileMath.tilesAtZoom(56.0, 24.0, 57.0, 25.0, 16)
+        val z15 = TileMath.tilesAtZoom(48.0, 11.0, 49.0, 12.0, 15)
+        val z16 = TileMath.tilesAtZoom(48.0, 11.0, 49.0, 12.0, 16)
         assertTrue(z16 in (z15 * 3)..(z15 * 5), "z15=$z15 z16=$z16")
     }
 
     @Test
     fun rangeIsInclusiveAndSumsEachZoom() {
-        val a = TileMath.tilesAtZoom(56.80, 24.62, 56.82, 24.65, 14)
-        val b = TileMath.tilesAtZoom(56.80, 24.62, 56.82, 24.65, 15)
-        assertEquals(a + b, TileMath.tileCount(56.80, 24.62, 56.82, 24.65, 14, 15))
+        val a = TileMath.tilesAtZoom(48.00, 11.02, 48.02, 11.05, 14)
+        val b = TileMath.tilesAtZoom(48.00, 11.02, 48.02, 11.05, 15)
+        assertEquals(a + b, TileMath.tileCount(48.00, 11.02, 48.02, 11.05, 14, 15))
     }
 
     @Test

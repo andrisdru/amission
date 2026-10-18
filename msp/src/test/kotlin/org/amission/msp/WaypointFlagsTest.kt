@@ -37,7 +37,7 @@ class WaypointFlagsTest {
     @Test
     fun haversineMatchesKnownDistance() {
         // 0.001 degree of latitude is ~111.2 m
-        val d = Geo.distanceMeters(56.0, 24.0, 56.001, 24.0)
+        val d = Geo.distanceMeters(48.0, 11.0, 48.001, 11.0)
         assertEquals(111.2, d, 0.5)
     }
 }

@@ -17,11 +17,11 @@ class TelemetryTest {
 
     @Test
     fun decodesFieldsInTheOrderTheFcWritesThem() {
-        val gps = GpsFix.decode(payload(2, 9, 568_064_270, 246_326_254, alt = 61, speed = 350, course = 1800, hdop = 95))
+        val gps = GpsFix.decode(payload(2, 9, 480_064_270, 110_326_254, alt = 61, speed = 350, course = 1800, hdop = 95))
         assertEquals(2, gps.fixType)
         assertEquals(9, gps.satellites)
-        assertEquals(56.806427, gps.latitude, 1e-9)
-        assertEquals(24.6326254, gps.longitude, 1e-9)
+        assertEquals(48.006427, gps.latitude, 1e-9)
+        assertEquals(11.0326254, gps.longitude, 1e-9)
         assertEquals(61, gps.altitudeM)
         assertEquals(350, gps.groundSpeedCms)
         assertEquals(1800, gps.courseDeg10)
@@ -37,10 +37,10 @@ class TelemetryTest {
 
     @Test
     fun onlyAFull3dFixWithSatellitesAndRealCoordinatesIsUsable() {
-        assertTrue(GpsFix.decode(payload(2, 6, 568_000_000, 246_000_000)).isUsable)
+        assertTrue(GpsFix.decode(payload(2, 6, 480_000_000, 110_000_000)).isUsable)
         assertFalse(GpsFix.decode(payload(0, 0, 0, 0)).isUsable, "no fix")
-        assertFalse(GpsFix.decode(payload(1, 7, 568_000_000, 246_000_000)).isUsable, "2D only")
-        assertFalse(GpsFix.decode(payload(2, 3, 568_000_000, 246_000_000)).isUsable, "too few satellites")
+        assertFalse(GpsFix.decode(payload(1, 7, 480_000_000, 110_000_000)).isUsable, "2D only")
+        assertFalse(GpsFix.decode(payload(2, 3, 480_000_000, 110_000_000)).isUsable, "too few satellites")
         assertFalse(GpsFix.decode(payload(2, 8, 0, 0)).isUsable, "0,0 is not a position")
     }
 
@@ -55,7 +55,7 @@ class TelemetryTest {
         val link = object : MspLink {
             override fun request(command: Int, payload: ByteArray): ByteArray {
                 asked = command
-                return payload(2, 7, 568_000_000, 246_000_000)
+                return payload(2, 7, 480_000_000, 110_000_000)
             }
         }
         assertTrue(TelemetryClient(link).gps().isUsable)

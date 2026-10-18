@@ -8,15 +8,15 @@ import kotlin.test.assertTrue
 class FlightProfileTest {
     // Two points about 1.11 km apart (0.01 degree of latitude), 80 m above take-off.
     private fun path(a1: Double = 80.0, a2: Double = 80.0, ref1: Boolean = false, ref2: Boolean = false) = listOf(
-        PathVertex(1, 56.80, 24.60, a1, ref1),
-        PathVertex(2, 56.81, 24.60, a2, ref2),
+        PathVertex(1, 48.00, 11.00, a1, ref1),
+        PathVertex(2, 48.01, 11.00, a2, ref2),
     )
 
     private fun flatTerrain(samples: List<RouteSample>, h: Double) = samples.map { h }
 
     @Test
     fun routeSamplingIncludesEveryWaypointAndStaysInOrder() {
-        val p = listOf(PathVertex(1, 56.80, 24.60, 80.0, false), PathVertex(5, 56.805, 24.60, 80.0, false), PathVertex(9, 56.81, 24.62, 80.0, false))
+        val p = listOf(PathVertex(1, 48.00, 11.00, 80.0, false), PathVertex(5, 48.005, 11.00, 80.0, false), PathVertex(9, 48.01, 11.02, 80.0, false))
         val s = FlightProfileBuilder.sampleRoute(p)
         assertEquals(listOf(0, 1, 2), s.mapNotNull { it.vertex })
         assertEquals(s.map { it.distanceM }.sorted(), s.map { it.distanceM })
@@ -90,7 +90,7 @@ class FlightProfileTest {
     @Test
     fun singleWaypointAndEmptyRoutesDoNotCrash() {
         assertTrue(FlightProfileBuilder.sampleRoute(emptyList()).isEmpty())
-        val one = listOf(PathVertex(1, 56.8, 24.6, 80.0, false))
+        val one = listOf(PathVertex(1, 48.0, 11.0, 80.0, false))
         val s = FlightProfileBuilder.sampleRoute(one)
         assertEquals(1, s.size)
         assertEquals(80.0, FlightProfileBuilder.build(one, s, listOf(10.0), 10.0, 40.0).points.single().aglM, 1e-9)

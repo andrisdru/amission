@@ -8,8 +8,8 @@ import kotlin.test.assertTrue
 
 class MissionXmlTest {
     private val mission = listOf(
-        Waypoint(1, WaypointAction.WAYPOINT, 568_053_612, 246_308_990, 10_000, p1 = 500, p3 = 0b10_001),
-        Waypoint(2, WaypointAction.POSHOLD_TIME, 568_060_000, 246_320_000, 3_750, p1 = 10, p2 = 300),
+        Waypoint(1, WaypointAction.WAYPOINT, 480_053_612, 110_308_990, 10_000, p1 = 500, p3 = 0b10_001),
+        Waypoint(2, WaypointAction.POSHOLD_TIME, 480_060_000, 110_320_000, 3_750, p1 = 10, p2 = 300),
         Waypoint(3, WaypointAction.JUMP, 0, 0, 0, p1 = 1, p2 = 2),
         Waypoint(4, WaypointAction.RTH, 0, 0, 3_000, p1 = 1),
     )
@@ -22,10 +22,10 @@ class MissionXmlTest {
 
     @Test
     fun writesDegreesAndMetresLikeTheConfigurator() {
-        val xml = MissionXml.write(mission, centerLat = 56.8, centerLon = 24.63, zoom = 16)
-        assertTrue("action=\"WAYPOINT\" lat=\"56.8053612\" lon=\"24.630899\" alt=\"100\"" in xml, xml)
+        val xml = MissionXml.write(mission, centerLat = 48.0, centerLon = 11.03, zoom = 16)
+        assertTrue("action=\"WAYPOINT\" lat=\"48.0053612\" lon=\"11.030899\" alt=\"100\"" in xml, xml)
         assertTrue("alt=\"37.5\"" in xml, "fractional metres")
-        assertTrue("cx=\"24.63\" cy=\"56.8\"" in xml)
+        assertTrue("cx=\"11.03\" cy=\"48\"" in xml)
         assertTrue("flag=\"165\"" in xml)
         assertEquals(1, Regex("flag=\"165\"").findAll(xml).count(), "only the last item carries the end flag")
     }
@@ -35,9 +35,9 @@ class MissionXmlTest {
         val xml = """<?xml version="1.0" encoding="UTF-8"?>
 <mission>
 	<version value="2.3-pre8"/>
-	<mwp cx="24.63" cy="56.8" home-x="0" home-y="0" zoom="16"/>
-	<missionitem no="1" action="WAYPOINT" lat="56.8053612" lon="24.630899" alt="100" parameter1="0" parameter2="0" parameter3="0" flag="0"/>
-	<missionitem no="2" action="PH_TIME" lat="56.806" lon="24.632" alt="50" parameter1="10" parameter2="0" parameter3="2" flag="0"/>
+	<mwp cx="11.03" cy="48" home-x="0" home-y="0" zoom="16"/>
+	<missionitem no="1" action="WAYPOINT" lat="48.0053612" lon="11.030899" alt="100" parameter1="0" parameter2="0" parameter3="0" flag="0"/>
+	<missionitem no="2" action="PH_TIME" lat="48.006" lon="11.032" alt="50" parameter1="10" parameter2="0" parameter3="2" flag="0"/>
 	<missionitem no="3" action="RTH" lat="0" lon="0" alt="30" parameter1="1" parameter2="0" parameter3="0" flag="165"/>
 </mission>"""
         val r = MissionXml.read(xml)
@@ -59,9 +59,9 @@ class MissionXmlTest {
     fun onlyTheFirstMissionOfAMultiMissionFileIsImported() {
         val xml = """<mission><version value="4.0.0"/>
 <meta mission="1"/>
-<missionitem no="1" action="WAYPOINT" lat="56.8" lon="24.6" alt="30" parameter1="0" parameter2="0" parameter3="0" flag="165"/>
+<missionitem no="1" action="WAYPOINT" lat="48.0" lon="11.0" alt="30" parameter1="0" parameter2="0" parameter3="0" flag="165"/>
 <meta mission="2"/>
-<missionitem no="1" action="WAYPOINT" lat="57.0" lon="25.0" alt="30" parameter1="0" parameter2="0" parameter3="0" flag="0"/>
+<missionitem no="1" action="WAYPOINT" lat="49.0" lon="12.0" alt="30" parameter1="0" parameter2="0" parameter3="0" flag="0"/>
 <missionitem no="2" action="RTH" lat="0" lon="0" alt="30" parameter1="0" parameter2="0" parameter3="0" flag="165"/>
 </mission>"""
         val r = MissionXml.read(xml)
@@ -117,13 +117,13 @@ class MissionXmlTest {
 }
 
 class MissionXmlHomeTest {
-    private val one = listOf(Waypoint(1, WaypointAction.WAYPOINT, 568_000_000, 246_000_000, 8_000))
+    private val one = listOf(Waypoint(1, WaypointAction.WAYPOINT, 480_000_000, 110_000_000, 8_000))
 
     @Test
     fun homeRoundTrips() {
-        val xml = MissionXml.write(one, home = 56.79 to 24.59)
-        assertTrue("home-x=\"24.59\" home-y=\"56.79\"" in xml, xml)
-        assertEquals(56.79 to 24.59, MissionXml.read(xml).home)
+        val xml = MissionXml.write(one, home = 47.99 to 10.99)
+        assertTrue("home-x=\"10.99\" home-y=\"47.99\"" in xml, xml)
+        assertEquals(47.99 to 10.99, MissionXml.read(xml).home)
     }
 
     @Test
