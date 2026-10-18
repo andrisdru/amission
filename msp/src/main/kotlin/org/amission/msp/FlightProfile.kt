@@ -57,6 +57,12 @@ class FlightProfile(
     val totalDistanceM: Double get() = points.lastOrNull()?.distanceM ?: 0.0
     val lowest: ProfilePoint? get() = points.minByOrNull { it.aglM }
     val hasIssues: Boolean get() = issues.isNotEmpty()
+
+    /** Ground height at [p] measured from the take-off ground (negative = below take-off). */
+    fun terrainAboveHomeM(p: ProfilePoint): Double = p.terrainM - homeElevationM
+
+    /** Planned altitude at [p] measured from the take-off ground, which is how altitudes are entered. */
+    fun flightAboveHomeM(p: ProfilePoint): Double = p.flightM - homeElevationM
 }
 
 /**
@@ -141,11 +147,11 @@ object FlightProfileBuilder {
         return FlightProfile(points, dist, path.map { it.waypointNumber }, homeElevationM, minAglM, issues)
     }
 
-    /** Smallest and largest altitude (terrain or flight) for scaling a chart. */
+    /** Smallest and largest height (terrain or flight) above the take-off ground, for scaling a chart. */
     fun heightRange(profile: FlightProfile): Pair<Double, Double> {
         if (profile.points.isEmpty()) return 0.0 to 1.0
-        val lo = profile.points.minOf { min(it.terrainM, it.flightM) }
-        val hi = profile.points.maxOf { max(it.terrainM, it.flightM) }
+        val lo = profile.points.minOf { min(profile.terrainAboveHomeM(it), profile.flightAboveHomeM(it)) }
+        val hi = profile.points.maxOf { max(profile.terrainAboveHomeM(it), profile.flightAboveHomeM(it)) }
         return lo to hi
     }
 }

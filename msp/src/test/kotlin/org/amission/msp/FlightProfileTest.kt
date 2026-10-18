@@ -96,3 +96,41 @@ class FlightProfileTest {
         assertEquals(80.0, FlightProfileBuilder.build(one, s, listOf(10.0), 10.0, 40.0).points.single().aglM, 1e-9)
     }
 }
+
+class FlightProfileRelativeToHomeTest {
+    private val path = listOf(
+        PathVertex(1, 48.00, 11.00, 80.0, false),
+        PathVertex(2, 48.01, 11.00, 80.0, false),
+    )
+
+    @Test
+    fun plannedAltitudeShowsAsEnteredAndGroundAsRiseOrFallFromTakeOff() {
+        val s = FlightProfileBuilder.sampleRoute(path)
+        // Take-off ground 23 m; the ground rises to 27 m in the middle and falls to 18 m at the end.
+        val terrain = s.map { 23.0 + 4.0 * (1.0 - Math.abs(it.t - 0.5) * 2.0) - 5.0 * it.t * it.t }
+        val prof = FlightProfileBuilder.build(path, s, terrain, homeElevationM = 23.0, minAglM = 40.0)
+        for (p in prof.points) {
+            assertEquals(80.0, prof.flightAboveHomeM(p), 1e-9, "the blue line is the 80 m that was typed")
+            assertEquals(p.terrainM - 23.0, prof.terrainAboveHomeM(p), 1e-9)
+            // the real height above the ground does not depend on which frame is plotted
+            assertEquals(prof.flightAboveHomeM(p) - prof.terrainAboveHomeM(p), p.aglM, 1e-9)
+        }
+    }
+
+    @Test
+    fun seaLevelReferencePointsAreConvertedToHeightAboveHome() {
+        val abs = listOf(PathVertex(1, 48.0, 11.0, 103.0, true), PathVertex(2, 48.01, 11.0, 103.0, true))
+        val s = FlightProfileBuilder.sampleRoute(abs)
+        val prof = FlightProfileBuilder.build(abs, s, s.map { 23.0 }, homeElevationM = 23.0, minAglM = 40.0)
+        assertEquals(80.0, prof.flightAboveHomeM(prof.points.first()), 1e-9, "103 m above sea over a 23 m take-off is 80 m above home")
+    }
+
+    @Test
+    fun rangeIncludesGroundBelowTakeOff() {
+        val s = FlightProfileBuilder.sampleRoute(path)
+        val prof = FlightProfileBuilder.build(path, s, s.map { 10.0 }, homeElevationM = 23.0, minAglM = 40.0)
+        val (lo, hi) = FlightProfileBuilder.heightRange(prof)
+        assertEquals(-13.0, lo, 1e-9)
+        assertEquals(80.0, hi, 1e-9)
+    }
+}
