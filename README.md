@@ -75,7 +75,7 @@ A signed release build needs your own key: create a keystore, put its path and p
 
 ## Using it
 
-1. **Plan.** Tap the map to add points. Select one to change its type, altitude or other parameters in the **Point** tab; the **List** tab shows the mission as the FC stores it.
+1. **Plan.** Tap the map to add points. Drag the small bar above the buttons up or down to give the map or the panel more room; the height is remembered. Select one to change its type, altitude or other parameters in the **Point** tab; the **List** tab shows the mission as the FC stores it.
 2. **Set home.** *More ▸ Set home at map center* (or at your position after **Locate**). Relative altitudes count from the take-off point, so this makes the **Profile** tab accurate. Without it, home is assumed at point 1.
 3. **Check the Profile tab.** Look for the red stretches and the warning.
 4. **Connect and upload.** Plug the FC in over OTG, or choose its module in *More ▸ Bluetooth connection* (scan, tap the device, and it tests the link). Then press **Upload & save**. If Bluetooth is selected it is used when no cable is plugged in; a checkbox makes it win even with a cable. Then **Download** it again, or open it in the Configurator, to confirm it is what you planned.

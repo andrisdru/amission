@@ -18,7 +18,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -39,15 +42,21 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -155,6 +164,18 @@ class MissionViewModel(app: Application) : AndroidViewModel(app) {
         defaultAltM = m.coerceIn(0, 500)
         prefs.edit().putInt("defaultAltM", defaultAltM).apply()
     }
+
+    /** Height of the lower panel in dp; 0 means "use the default for this screen". */
+    var panelHeightDp by mutableFloatStateOf(prefs.getFloat("panelHeightDp", 0f))
+        private set
+
+    /** Moves the panel edge by [deltaDp] (positive = up, so taller). Always starts from the current height, never a stale one. */
+    fun dragPanel(deltaDp: Float, defaultDp: Float, minDp: Float, maxDp: Float) {
+        val current = if (panelHeightDp > 0f) panelHeightDp else defaultDp
+        panelHeightDp = (current + deltaDp).coerceIn(minDp, maxDp)
+    }
+
+    fun savePanelHeight() { prefs.edit().putFloat("panelHeightDp", panelHeightDp).apply() }
 
     /** Warn when the plan is lower than this above the ground. */
     var minAglM by mutableIntStateOf(prefs.getInt("minAglM", DEFAULT_MIN_AGL_M))
@@ -485,7 +506,13 @@ private fun MissionScreen(vm: MissionViewModel = viewModel()) {
     var uploadWarnings by remember { mutableStateOf<List<String>>(emptyList()) }
     // Selecting a waypoint (map tap or table row) brings its editor up.
     LaunchedEffect(vm.selected) { if (vm.selected != null) { tab = 0; expanded = true } }
-    val maxPanelHeight = (LocalConfiguration.current.screenHeightDp * 0.45f).dp
+    val screenDp = LocalConfiguration.current.screenHeightDp
+    // The lower panel's content height is the user's to choose (drag the handle). The fixed parts around it (status, buttons,
+    // tabs, handle, system bars) and a minimum strip of map set the upper limit.
+    val maxPanelDp = (screenDp - PANEL_RESERVED_DP).coerceAtLeast(PANEL_MIN_DP)
+    val defaultPanelDp = screenDp * 0.40f
+    val panelDp = (if (vm.panelHeightDp > 0f) vm.panelHeightDp else defaultPanelDp).coerceIn(PANEL_MIN_DP, maxPanelDp)
+    val density = LocalDensity.current.density
 
     var showMapSettings by remember { mutableStateOf(false) }
     var showOffline by remember { mutableStateOf(false) }
@@ -569,6 +596,14 @@ private fun MissionScreen(vm: MissionViewModel = viewModel()) {
             }
         }
         Column(Modifier.fillMaxWidth().navigationBarsPadding()) {
+            PanelHandle(
+                onDrag = { dyPx ->
+                    // Dragging up makes the panel taller; a hidden panel opens as soon as it is pulled up.
+                    if (!expanded && dyPx < 0f) expanded = true
+                    vm.dragPanel(-dyPx / density, defaultPanelDp, PANEL_MIN_DP, maxPanelDp)
+                },
+                onDragEnd = vm::savePanelHeight,
+            )
             Text(
                 vm.status,
                 style = MaterialTheme.typography.bodySmall,
@@ -612,7 +647,7 @@ private fun MissionScreen(vm: MissionViewModel = viewModel()) {
             }
             if (expanded) {
                 Column(
-                    Modifier.fillMaxWidth().heightIn(max = maxPanelHeight)
+                    Modifier.fillMaxWidth().height(panelDp.dp)
                         .verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 4.dp),
                 ) {
                     val sel = vm.selected
@@ -839,4 +874,33 @@ private fun MapSettingsDialog(
         confirmButton = { TextButton(onClick = { onSave(candidate) }, enabled = !urlProblem) { Text("Save") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
+}
+
+private const val PANEL_MIN_DP = 90f
+// Status line, button row, tab row, handle, system bars and a strip of map that always stays visible.
+private const val PANEL_RESERVED_DP = 360f
+
+/** Grab bar between the map and the lower panel; drag it up or down to give the map or the panel more room. */
+@Composable
+private fun PanelHandle(onDrag: (dyPx: Float) -> Unit, onDragEnd: () -> Unit) {
+    // The gesture block below is created once, so it must call the latest callbacks, not the ones from the first frame.
+    val latestDrag by rememberUpdatedState(onDrag)
+    val latestEnd by rememberUpdatedState(onDragEnd)
+    Box(
+        Modifier.fillMaxWidth().height(28.dp)
+            .semantics { contentDescription = "Resize panel: drag up or down" }
+            .pointerInput(Unit) {
+                detectVerticalDragGestures(
+                    onDragEnd = { latestEnd() },
+                    onDragCancel = { latestEnd() },
+                    onVerticalDrag = { change, dy -> change.consume(); latestDrag(dy) },
+                )
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            Modifier.width(48.dp).height(5.dp)
+                .background(MaterialTheme.colorScheme.outline, androidx.compose.foundation.shape.RoundedCornerShape(3.dp)),
+        )
+    }
 }
