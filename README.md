@@ -23,7 +23,7 @@ amission is not affiliated with or endorsed by the INAV project.
 - **Locate** centres the map on the quad's GPS when it has a fix, otherwise on the phone's GPS.
 
 **Safety aids**
-- A **Profile** tab plots planned altitude against distance with the terrain under it, and warns where the quad would be lower than a limit above the ground (40 m by default, adjustable). Uploading a mission with a low stretch asks first.
+- A **Profile** tab plots your planned height against distance, measured from the ground where you take off, with the terrain under it and a colour key, and warns where the quad would be lower than a limit above the ground (40 m by default, adjustable). Uploading a mission with a low stretch asks first.
 - A planned take-off (home) point, because relative altitudes count from there.
 - A mission check that catches mistakes the flight controller would accept without complaint, such as waypoints placed after an RTH (they are never flown), a Jump to a point that does not exist, or a mission that ends on a Set Head. Uploading asks first.
 

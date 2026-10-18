@@ -2,6 +2,9 @@ package org.amission
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -58,7 +61,7 @@ fun ProfileTab(vm: MissionViewModel) {
         }
         Text(
             "Terrain heights: Open-Meteo.com (CC BY 4.0), from the Copernicus DEM. Heights above ground use terrain data of about 90 m resolution. Trees, buildings and masts are " +
-                "not included, so keep a margin. Relative altitudes count from the take-off point.",
+                "not included, so keep a margin. Heights are measured from the ground where the quad takes off.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -91,10 +94,40 @@ private fun ProfileContent(state: ProfileState.Ready, vm: MissionViewModel) {
         )
     }
     ProfileChart(p, Modifier.fillMaxWidth().height(220.dp))
+    ProfileLegend(vm.minAglM)
     Text(
-        "Route ${formatDistance(p.totalDistanceM)} · home ground ${p.homeElevationM.roundToInt()} m above sea level" +
-            if (state.homeAssumed) " (home assumed at point 1: set it in More ▸ Set home)" else "",
+        "Route ${formatDistance(p.totalDistanceM)} · take-off ground ${p.homeElevationM.roundToInt()} m above sea level" +
+            if (state.homeAssumed) " (assumed to be at point 1's ground: set the real take-off spot in More ▸ Home point)" else "",
         style = MaterialTheme.typography.bodySmall,
+    )
+}
+
+/** What each line in the chart means. Heights are measured from the ground where the quad takes off. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ProfileLegend(minAglM: Int) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        LegendItem("Your flight (waypoints numbered)") { Canvas(Modifier.width(26.dp).height(10.dp)) { swatchLine(FlightColor, 3.dp.toPx()) } }
+        LegendItem("Too low") { Canvas(Modifier.width(26.dp).height(10.dp)) { swatchLine(WarnColor, 3.dp.toPx()) } }
+        LegendItem("Lowest allowed: ground + $minAglM m") {
+            Canvas(Modifier.width(26.dp).height(10.dp)) { swatchLine(LimitColor, 2.dp.toPx(), dashed = true) }
+        }
+        LegendItem("Ground") { Canvas(Modifier.width(26.dp).height(10.dp)) { drawRect(TerrainColor.copy(alpha = 0.55f)) } }
+    }
+}
+
+@Composable
+private fun LegendItem(text: String, swatch: @Composable () -> Unit) {
+    Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        swatch()
+        Text(text, style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.swatchLine(color: Color, width: Float, dashed: Boolean = false) {
+    drawLine(
+        color, Offset(0f, size.height / 2), Offset(size.width, size.height / 2), strokeWidth = width,
+        pathEffect = if (dashed) PathEffect.dashPathEffect(floatArrayOf(9f, 6f)) else null,
     )
 }
 
@@ -113,7 +146,7 @@ private fun ProfileChart(profile: FlightProfile, modifier: Modifier) {
         val w = size.width - left - right
         val h = size.height - top - bottom
         val (low0, high0) = FlightProfileBuilder.heightRange(profile)
-        val highWithLimit = max(high0, pts.maxOf { it.terrainM + profile.minAglM })
+        val highWithLimit = max(high0, pts.maxOf { profile.terrainAboveHomeM(it) + profile.minAglM })
         val pad = max(10.0, (highWithLimit - low0) * 0.1)
         val step = niceStep((highWithLimit - low0 + 2 * pad) / 5)
         val lo = floor((low0 - pad) / step) * step
@@ -130,11 +163,23 @@ private fun ProfileChart(profile: FlightProfile, modifier: Modifier) {
             drawText(t, topLeft = Offset(left - t.size.width - 4.dp.toPx(), y(g) - t.size.height / 2f))
             g += step
         }
+        // 0 is the take-off ground: a stronger line so "above" and "below" take-off are easy to tell apart
+        if (0.0 in lo..hi) {
+            drawLine(axisColor, Offset(left, y(0.0)), Offset(left + w, y(0.0)), strokeWidth = 1.5.dp.toPx())
+        }
+        val axisTitle = measurer.measure("m above take-off", label)
+        drawText(axisTitle, topLeft = Offset(left + 4.dp.toPx(), 0f))
+
         // distance labels
         val xStep = niceStep(total / 4)
         var d = 0.0
         while (d <= total + 1e-6) {
-            val t = measurer.measure(if (total >= 2000) String.format(Locale.US, "%.1f km", d / 1000) else "${d.roundToInt()} m", label)
+            val text = when {
+                total < 2000 -> "${d.roundToInt()} m"
+                xStep >= 1000 -> String.format(Locale.US, "%.0f km", d / 1000)
+                else -> String.format(Locale.US, "%.1f km", d / 1000)
+            }
+            val t = measurer.measure(text, label)
             drawText(t, topLeft = Offset(x(d) - t.size.width / 2f, top + h + 3.dp.toPx()))
             d += xStep
         }
@@ -142,19 +187,19 @@ private fun ProfileChart(profile: FlightProfile, modifier: Modifier) {
         // terrain
         val ground = Path().apply {
             moveTo(x(pts.first().distanceM), y(lo))
-            pts.forEach { lineTo(x(it.distanceM), y(it.terrainM)) }
+            pts.forEach { lineTo(x(it.distanceM), y(profile.terrainAboveHomeM(it))) }
             lineTo(x(pts.last().distanceM), y(lo))
             close()
         }
         drawPath(ground, TerrainColor.copy(alpha = 0.55f))
         drawPath(
-            Path().apply { pts.forEachIndexed { i, p -> if (i == 0) moveTo(x(p.distanceM), y(p.terrainM)) else lineTo(x(p.distanceM), y(p.terrainM)) } },
+            Path().apply { pts.forEachIndexed { i, p -> if (i == 0) moveTo(x(p.distanceM), y(profile.terrainAboveHomeM(p))) else lineTo(x(p.distanceM), y(profile.terrainAboveHomeM(p))) } },
             TerrainColor, style = Stroke(width = 2.dp.toPx()),
         )
 
         // the lowest allowed flight height: terrain plus the minimum
         drawPath(
-            Path().apply { pts.forEachIndexed { i, p -> if (i == 0) moveTo(x(p.distanceM), y(p.terrainM + profile.minAglM)) else lineTo(x(p.distanceM), y(p.terrainM + profile.minAglM)) } },
+            Path().apply { pts.forEachIndexed { i, p -> if (i == 0) moveTo(x(p.distanceM), y(profile.terrainAboveHomeM(p) + profile.minAglM)) else lineTo(x(p.distanceM), y(profile.terrainAboveHomeM(p) + profile.minAglM)) } },
             LimitColor, style = Stroke(width = 1.5.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(14f, 10f))),
         )
 
@@ -164,7 +209,7 @@ private fun ProfileChart(profile: FlightProfile, modifier: Modifier) {
             val low = minOf(a.aglM, b.aglM) < profile.minAglM
             drawLine(
                 if (low) WarnColor else FlightColor,
-                Offset(x(a.distanceM), y(a.flightM)), Offset(x(b.distanceM), y(b.flightM)),
+                Offset(x(a.distanceM), y(profile.flightAboveHomeM(a))), Offset(x(b.distanceM), y(profile.flightAboveHomeM(b))),
                 strokeWidth = 3.dp.toPx(),
             )
         }
@@ -172,7 +217,7 @@ private fun ProfileChart(profile: FlightProfile, modifier: Modifier) {
         // waypoint markers
         pts.forEach { p ->
             val v = p.vertex ?: return@forEach
-            val c = Offset(x(p.distanceM), y(p.flightM))
+            val c = Offset(x(p.distanceM), y(profile.flightAboveHomeM(p)))
             val bad = p.aglM < profile.minAglM
             drawCircle(Color.White, 5.dp.toPx(), c)
             drawCircle(if (bad) WarnColor else FlightColor, 5.dp.toPx(), c, style = Stroke(width = 2.dp.toPx()))
@@ -183,7 +228,10 @@ private fun ProfileChart(profile: FlightProfile, modifier: Modifier) {
 }
 
 private fun niceStep(raw: Double): Double {
-    val steps = doubleArrayOf(10.0, 20.0, 25.0, 50.0, 100.0, 200.0, 250.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0)
+    val steps = doubleArrayOf(
+        10.0, 20.0, 25.0, 50.0, 100.0, 200.0, 250.0, 500.0, 1_000.0, 2_000.0, 5_000.0, 10_000.0,
+        20_000.0, 50_000.0, 100_000.0, 200_000.0, 500_000.0, 1_000_000.0,
+    )
     return steps.firstOrNull { it >= raw } ?: steps.last()
 }
 
