@@ -39,3 +39,24 @@ class TileMathTest {
         assertEquals(31, TileMath.tileY(-90.0, 5))
     }
 }
+
+class TileZoomOffsetTest {
+    @Test
+    fun smallerTilesAreFetchedDeeper() {
+        assertEquals(0, TileMath.tileZoomOffset(512))
+        assertEquals(1, TileMath.tileZoomOffset(256))
+        assertEquals(2, TileMath.tileZoomOffset(128))
+        assertEquals(0, TileMath.tileZoomOffset(1024))
+    }
+
+    @Test
+    fun deeperTilesMeanAboutFourTimesAsManyOnAnAreaOfRealSize() {
+        // Over an area a few km wide, going one zoom level deeper quarters the tile size, so the totals differ by about 4.
+        val s = 48.00; val w = 11.00; val n = 48.05; val e = 11.05
+        val off = TileMath.tileZoomOffset(256)
+        val deeper = TileMath.tileCount(s, w, n, e, 13 + off, 17 + off)
+        val plain = TileMath.tileCount(s, w, n, e, 13, 17)
+        val ratio = deeper.toDouble() / plain
+        assertTrue(ratio in 3.0..4.5, "deeper=$deeper plain=$plain ratio=$ratio")
+    }
+}

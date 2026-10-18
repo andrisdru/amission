@@ -25,6 +25,20 @@ object TileMath {
         return floor(y).toInt().coerceIn(0, n - 1)
     }
 
+    /**
+     * How many zoom levels deeper than the map zoom the tiles of a source are fetched. The map treats a 512 px tile as
+     * one tile per zoom level, so a source of 256 px tiles needs tiles from one level deeper (map zoom 17 uses tile
+     * zoom 18, four times as many tiles), and 128 px tiles two levels deeper. Measured on a real download: map zoom
+     * 13 to 17 over a small area fetched tiles 14 to 18, 23 in all, not the 8 a one-to-one count gives.
+     */
+    fun tileZoomOffset(tileSizePx: Int): Int {
+        require(tileSizePx > 0) { "tile size must be positive" }
+        var offset = 0
+        var size = tileSizePx
+        while (size < 512 && offset < 4) { size *= 2; offset++ }
+        return offset
+    }
+
     /** Number of tiles covering the box at one zoom level (west must be <= east). */
     fun tilesAtZoom(south: Double, west: Double, north: Double, east: Double, zoom: Int): Long {
         val x0 = tileX(west, zoom); val x1 = tileX(east, zoom)
