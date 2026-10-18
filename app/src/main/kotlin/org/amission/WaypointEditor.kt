@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.sp
 import org.amission.msp.AltitudeMode
 import org.amission.msp.Geo
 import org.amission.msp.GroundHeight
+import org.amission.msp.Units
 import org.amission.msp.Waypoint
 import org.amission.msp.WaypointAction
 import java.util.Locale
@@ -183,16 +184,12 @@ private fun GroundDistanceRow(vm: MissionViewModel, wp: Waypoint) {
 private fun ActionFields(vm: MissionViewModel, wp: Waypoint) {
     when (wp.action) {
         WaypointAction.WAYPOINT ->
-            NumberField("Speed (cm/s)", wp.p1.toString(), intOnly = true) { s ->
-                s.toIntOrNull()?.takeIf { it in 0..10_000 }?.let { v -> vm.updateSelected { it.copy(p1 = v) } }
-            }
+            SpeedField(wp.p1) { v -> vm.updateSelected { it.copy(p1 = v) } }
         WaypointAction.POSHOLD_TIME -> {
             NumberField("Time (s):", wp.p1.toString(), intOnly = true) { s ->
                 s.toIntOrNull()?.takeIf { it in 0..32_767 }?.let { v -> vm.updateSelected { it.copy(p1 = v) } }
             }
-            NumberField("Speed (cm/s)", wp.p2.toString(), intOnly = true) { s ->
-                s.toIntOrNull()?.takeIf { it in 0..10_000 }?.let { v -> vm.updateSelected { it.copy(p2 = v) } }
-            }
+            SpeedField(wp.p2) { v -> vm.updateSelected { it.copy(p2 = v) } }
         }
         WaypointAction.RTH -> {
             // INAV starts its normal return-to-home here and does not read this entry's altitude, so none is offered.
@@ -347,5 +344,24 @@ fun MissionProblems(vm: MissionViewModel) {
                 modifier = Modifier.fillMaxWidth().let { m -> issue.pointNumber?.let { p -> m.clickable { vm.select(p - 1) } } ?: m },
             )
         }
+    }
+}
+
+/** Waypoint speed in cm/s as INAV stores it, with the same speed in km/h beside it, like the metres beside the altitude. */
+@Composable
+private fun SpeedField(cmPerSec: Int, onChange: (Int) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        NumberField("Speed (cm/s)", cmPerSec.toString(), intOnly = true) { s ->
+            s.toIntOrNull()?.takeIf { it in 0..10_000 }?.let(onChange)
+        }
+        Text(Units.formatKmh(cmPerSec), Modifier.padding(start = 8.dp))
+    }
+    if (cmPerSec < Units.MIN_WAYPOINT_SPEED_CM_S) {
+        Text(
+            "A multicopter ignores speeds under ${Units.MIN_WAYPOINT_SPEED_CM_S} cm/s (${Units.formatKmh(Units.MIN_WAYPOINT_SPEED_CM_S)}) " +
+                "and flies at its own default speed.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
