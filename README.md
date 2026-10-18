@@ -75,8 +75,8 @@ A signed release build needs your own key: create a keystore, put its path and p
 
 ## Using it
 
-1. **Plan.** Tap the map to add points. Drag the small bar above the buttons up or down to give the map or the panel more room; the height is remembered. Select one to change its type, altitude or other parameters in the **Point** tab; the **List** tab shows the mission as the FC stores it.
-2. **Set home.** *More ▸ Set home at map center* (or at your position after **Locate**). Relative altitudes count from the take-off point, so this makes the **Profile** tab accurate. Without it, home is assumed at point 1.
+1. **Plan.** Tap the map to add points. Drag the small bar above the buttons up or down to give the map or the panel more room; the height is remembered. Press and hold a marker, then drag it to move the point; a touch anywhere else pans the map. Select one to change its type, altitude or other parameters in the **Point** tab; the **List** tab shows the mission as the FC stores it.
+2. **Set home.** *More ▸ Home point…* and choose the quad's GPS (needs a fix), the phone's GPS, or the centre of the map. Relative altitudes count from the take-off point, so this makes the **Profile** tab accurate. Without it, home is assumed at point 1.
 3. **Check the Profile tab.** Look for the red stretches and the warning.
 4. **Connect and upload.** Plug the FC in over OTG, or choose its module in *More ▸ Bluetooth connection* (scan, tap the device, and it tests the link). Then press **Upload & save**. If Bluetooth is selected it is used when no cable is plugged in; a checkbox makes it win even with a cable. Then **Download** it again, or open it in the Configurator, to confirm it is what you planned.
 
@@ -92,7 +92,7 @@ There are no accounts, ads or analytics. The app talks to these services:
 |---|---|---|
 | `tiles.openfreemap.org` | The map area you look at (tile requests) and your IP address | Street map |
 | Your satellite provider | The tile area you look at and your key | Satellite imagery, only if you set it up |
-| `api.open-meteo.com` | The coordinates of your route and of your home point (which can be your own position if you set it from Locate) | Terrain heights for the Profile tab. Results are cached on the phone |
+| `api.open-meteo.com` | The coordinates of your route and of your home point (which can be your own position if you set it from GPS) | Terrain heights for the Profile tab. Results are cached on the phone |
 
 Location permission is used only when you press **Locate**. Bluetooth needs the *Nearby devices* permission (or location on Android 11 and older) to find and talk to the module; the app does not derive your position from it. Your position is used on the device to centre the map and is not sent anywhere by the app. Missions, settings and the cache stay on the phone.
 

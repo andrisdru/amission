@@ -61,4 +61,6 @@ INAV waypoint altitude is relative to the take-off origin unless p3 bit 0 is set
 - No keys, tokens or personal data in code, tests, commit messages or docs.
 - Commit messages: imperative, sentence case, no `feat:`-style prefixes, never "WIP"; say why when it is not obvious.
 - An RTH entry's own altitude is not read by INAV (it just starts the normal return-to-home), so the editor offers none for RTH.
-- Not built yet: dragging waypoints on the map, a mission library, release signing, Bluetooth download and upload tests on hardware.
+- Not built yet: a mission library, Bluetooth download and upload tests on hardware.
+- Dragging a waypoint: `DraggableMapView` (in `MissionMap.kt`) judges a long press itself, before the map sees the touch. If a marker is under the finger it sends the map a cancel, keeps the rest of the gesture and reports moves; anywhere else the touch goes to the map, which pans. Live moves update the mission without saving; the save and the terrain lookup happen once when the finger lifts. Do not move that decision into a Compose gesture: the map would pan at the same time.
+- Home can be set from the quad's GPS (read over USB or Bluetooth, only with a usable fix), the phone's GPS, or the map centre (`HomeDialog.kt`). It is for planning only and is not sent to the FC.
