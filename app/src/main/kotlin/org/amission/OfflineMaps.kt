@@ -32,6 +32,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import org.amission.msp.ProviderErrors
 import org.amission.msp.TileMath
 import org.json.JSONObject
 import org.maplibre.android.geometry.LatLng
@@ -203,8 +204,8 @@ class OfflineMaps(private val context: Context) {
                         }
                     }
 
-                    // Individual tile failures are retried by the engine; just surface the latest one.
-                    override fun onError(error: OfflineRegionError) { message = "Download problem: ${error.message}" }
+                    // Individual tile failures are retried by the engine; just surface the latest one, in plain words.
+                    override fun onError(error: OfflineRegionError) { message = ProviderErrors.describe(error.message) }
 
                     override fun mapboxTileCountLimitExceeded(limit: Long) {
                         message = "Too many tiles for this download (limit $limit)"
@@ -402,3 +403,4 @@ private fun formatEstimate(mb: Double): String = when {
     mb < 100_000 -> String.format(Locale.US, "%,.0f MB", mb)
     else -> "over 100,000 MB"
 }
+
