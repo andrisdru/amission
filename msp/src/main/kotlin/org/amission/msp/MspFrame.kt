@@ -9,6 +9,7 @@ object Msp {
     const val WP_MISSION_LOAD = 18
     const val WP_MISSION_SAVE = 19
     const val WP_GETINFO = 20
+    const val RAW_GPS = 106
     const val WP = 118
     const val SET_WP = 209
 
