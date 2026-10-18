@@ -5,6 +5,12 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.PointF
+import android.graphics.RectF
+import android.os.SystemClock
+import android.view.HapticFeedbackConstants
+import android.view.MotionEvent
+import android.view.ViewConfiguration
+import kotlin.math.hypot
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -58,6 +64,8 @@ fun MissionMap(
     selected: Int?,
     onMapTap: (lat: Double, lon: Double) -> Unit,
     onSelect: (index: Int) -> Unit,
+    onMoveWaypoint: (index: Int, lat: Double, lon: Double) -> Unit,
+    onMoveEnd: (index: Int) -> Unit,
     onViewportChanged: (Viewport) -> Unit,
     mapStyle: MapStyle,
     fitRequest: Int,
@@ -72,6 +80,8 @@ fun MissionMap(
     var styleReady by remember { mutableStateOf(false) }
     val tap by rememberUpdatedState(onMapTap)
     val select by rememberUpdatedState(onSelect)
+    val moveWaypoint by rememberUpdatedState(onMoveWaypoint)
+    val moveEnd by rememberUpdatedState(onMoveEnd)
     val viewportChanged by rememberUpdatedState(onViewportChanged)
 
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -94,6 +104,22 @@ fun MissionMap(
                 val b = m.projection.visibleRegion.latLngBounds
                 viewportChanged(Viewport(b.latitudeSouth, b.longitudeWest, b.latitudeNorth, b.longitudeEast, m.cameraPosition.zoom))
             }
+            // Long-press-and-drag support: find the marker under a finger and turn finger positions into coordinates.
+            mapView.screenToLatLng = { x, y -> m.projection.fromScreenLocation(PointF(x, y)) }
+            mapView.markerAt = { x, y ->
+                val reach = 28f * mapView.resources.displayMetrics.density
+                val hits = m.queryRenderedFeatures(RectF(x - reach, y - reach, x + reach, y + reach), LAYER_POINTS)
+                // Several markers can overlap under a finger; take the one whose centre is closest.
+                hits.mapNotNull { f ->
+                    val idx = f.getNumberProperty("idx")?.toInt() ?: return@mapNotNull null
+                    val p = f.geometry() as? Point ?: return@mapNotNull null
+                    val s = m.projection.toScreenLocation(LatLng(p.latitude(), p.longitude()))
+                    idx to hypot(s.x - x, s.y - y)
+                }.minByOrNull { it.second }?.first
+            }
+            mapView.onDragStart = { select(it) }
+            mapView.onDragMove = { i, lat, lon -> moveWaypoint(i, lat, lon) }
+            mapView.onDragEnd = { moveEnd(it) }
             m.addOnMapClickListener { latLng ->
                 val screen: PointF = m.projection.toScreenLocation(latLng)
                 val hit = m.queryRenderedFeatures(screen, LAYER_POINTS).firstOrNull()
@@ -152,9 +178,96 @@ fun MissionMap(
     }
 }
 
-private fun createMapView(context: Context): MapView {
+private fun createMapView(context: Context): DraggableMapView {
     MapSdk.init(context)
-    return MapView(context)
+    return DraggableMapView(context)
+}
+
+/**
+ * A map where a long press on a waypoint marker picks it up and drags it with the finger, while a touch anywhere
+ * else pans the map as usual. The long press is judged here, before the map sees it, because the map would
+ * otherwise treat the same movement as a pan.
+ */
+private class DraggableMapView(context: Context) : MapView(context) {
+    /** Index (into the mission list) of the marker under the finger, or null. Set once the map is ready. */
+    var markerAt: ((x: Float, y: Float) -> Int?)? = null
+    var screenToLatLng: ((x: Float, y: Float) -> LatLng)? = null
+    var onDragStart: ((index: Int) -> Unit)? = null
+    var onDragMove: ((index: Int, lat: Double, lon: Double) -> Unit)? = null
+    var onDragEnd: ((index: Int) -> Unit)? = null
+
+    private val slop = ViewConfiguration.get(context).scaledTouchSlop
+    private var downTime = 0L
+    private var lastX = 0f
+    private var lastY = 0f
+    private var startX = 0f
+    private var startY = 0f
+    private var pending: Runnable? = null
+    private var dragIndex: Int? = null
+
+    // super.dispatchTouchEvent cannot be called from inside a lambda, so go through a member.
+    private fun mapDispatch(e: MotionEvent) = super.dispatchTouchEvent(e)
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        lastX = ev.x
+        lastY = ev.y
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                cancelPending()
+                downTime = ev.downTime
+                startX = ev.x
+                startY = ev.y
+                val r = Runnable { pickUp() }
+                pending = r
+                postDelayed(r, ViewConfiguration.getLongPressTimeout().toLong())
+            }
+            MotionEvent.ACTION_POINTER_DOWN -> if (dragIndex == null) cancelPending()
+            MotionEvent.ACTION_MOVE ->
+                if (dragIndex == null && pending != null && hypot(ev.x - startX, ev.y - startY) > slop) cancelPending()
+        }
+
+        val index = dragIndex
+        if (index != null) {
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_MOVE -> moveTo(index, ev.x, ev.y)
+                MotionEvent.ACTION_UP -> { moveTo(index, ev.x, ev.y); finish(index) }
+                MotionEvent.ACTION_CANCEL -> finish(index)
+            }
+            return true // the map never sees the rest of this gesture
+        }
+        if (ev.actionMasked == MotionEvent.ACTION_UP || ev.actionMasked == MotionEvent.ACTION_CANCEL) cancelPending()
+        return mapDispatch(ev)
+    }
+
+    private fun cancelPending() {
+        pending?.let { removeCallbacks(it) }
+        pending = null
+    }
+
+    private fun pickUp() {
+        pending = null
+        val index = markerAt?.invoke(lastX, lastY) ?: return // long press on empty map: leave it to the map
+        // Tell the map its pan or tap is over, then take the rest of the touch for ourselves.
+        val cancel = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), MotionEvent.ACTION_CANCEL, lastX, lastY, 0)
+        mapDispatch(cancel)
+        cancel.recycle()
+        parent?.requestDisallowInterceptTouchEvent(true)
+        performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        dragIndex = index
+        onDragStart?.invoke(index)
+        moveTo(index, lastX, lastY)
+    }
+
+    private fun moveTo(index: Int, x: Float, y: Float) {
+        val ll = screenToLatLng?.invoke(x, y) ?: return
+        onDragMove?.invoke(index, ll.latitude, ll.longitude)
+    }
+
+    private fun finish(index: Int) {
+        dragIndex = null
+        parent?.requestDisallowInterceptTouchEvent(false)
+        onDragEnd?.invoke(index)
+    }
 }
 
 private fun addMissionLayers(style: Style) {

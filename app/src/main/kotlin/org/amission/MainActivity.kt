@@ -68,6 +68,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.amission.msp.GpsFix
 import org.amission.msp.FlightProfileBuilder
+import org.amission.msp.Geo
 import org.amission.msp.MissionCheck
 import org.amission.msp.MissionClient
 import org.amission.msp.MissionFileException
@@ -131,22 +132,76 @@ class MissionViewModel(app: Application) : AndroidViewModel(app) {
     var home by mutableStateOf(stored.home)
         private set
 
-    fun setHome(lat: Double, lon: Double) {
-        home = lat to lon
+    fun setHome(lat: Double, lon: Double, source: String) {
+        home = Geo.clampLatitude(lat) to Geo.normalizeLongitude(lon)
         persist()
         scheduleProfile()
-        status = "Home set. Relative altitudes now count from there."
+        status = "Home set from $source. Relative altitudes now count from there."
     }
 
-    fun setHomeAtMapCenter() {
-        val c = mapCenter ?: return
-        setHome(c.first, c.second)
+    /** Lets a dialog put a message on the status line. */
+    fun reportStatus(message: String) { status = message }
+
+    /** True while a GPS read for the home point is running. */
+    var homeBusy by mutableStateOf(false)
+        private set
+
+    /** Returns true if home was set. */
+    fun setHomeAtMapCenter(): Boolean {
+        val c = mapCenter ?: run { status = "Move the map first."; return false }
+        setHome(c.first, c.second, "the map centre")
+        return true
     }
 
-    fun setHomeAtMyPosition() {
-        val l = locateResult
-        if (l == null) { status = "Tap Locate first, then set home at your position."; return }
-        setHome(l.lat, l.lon)
+    fun setHomeFromPhoneGps(onDone: () -> Unit) {
+        if (homeBusy) return
+        viewModelScope.launch {
+            homeBusy = true
+            status = "Finding the phone's position…"
+            try {
+                val loc = PhoneLocation.current(getApplication())
+                if (loc == null) {
+                    status = if (PhoneLocation.hasPermission(getApplication())) {
+                        "The phone has no position yet. Turn on location services, or go outside."
+                    } else {
+                        "Allow location access to use the phone's GPS."
+                    }
+                    return@launch
+                }
+                locateResult = LocateResult(loc.latitude, loc.longitude, "phone GPS", ++locateId)
+                val accuracy = if (loc.hasAccuracy()) " (accurate to about ${loc.accuracy.toInt()} m)" else ""
+                setHome(loc.latitude, loc.longitude, "the phone's GPS$accuracy")
+                onDone()
+            } finally {
+                homeBusy = false
+            }
+        }
+    }
+
+    fun setHomeFromQuadGps(onDone: () -> Unit) {
+        if (homeBusy) return
+        if (busy) { status = "Wait for the current transfer to the flight controller to finish."; return }
+        viewModelScope.launch {
+            homeBusy = true
+            status = "Reading the quad's GPS…"
+            try {
+                when (val q = readQuadGps()) {
+                    is QuadGps.Fix -> {
+                        val g = q.gps
+                        locateResult = LocateResult(g.latitude, g.longitude, "quad GPS", ++locateId)
+                        setHome(g.latitude, g.longitude, "the quad's GPS (${g.satellites} satellites)")
+                        onDone()
+                    }
+                    is QuadGps.NoFix ->
+                        status = "The quad has no GPS fix yet (${q.gps.satellites} satellites). Wait for a fix and try again, or use the phone's GPS."
+                    is QuadGps.Failed -> status = "Could not read the quad's GPS (${q.reason})."
+                    QuadGps.NoDevice ->
+                        status = "No quad to read. Plug it in with USB, or choose its Bluetooth module in More ▸ Bluetooth connection."
+                }
+            } finally {
+                homeBusy = false
+            }
+        }
     }
 
     fun clearHome() {
@@ -400,6 +455,26 @@ class MissionViewModel(app: Application) : AndroidViewModel(app) {
 
     fun select(index: Int) { selected = index }
 
+    /**
+     * Called continuously while a marker is dragged on the map: moves it on screen but neither saves nor looks up
+     * terrain, which would be hundreds of times per drag. [moveWaypointDone] does both once the finger lifts.
+     */
+    fun moveWaypointLive(index: Int, lat: Double, lon: Double) {
+        if (index !in waypoints.indices) return
+        val la = Geo.clampLatitude(lat)
+        val lo = Geo.normalizeLongitude(lon)
+        waypoints = waypoints.toMutableList().also {
+            it[index] = it[index].copy(latE7 = (la * 1e7).roundToInt(), lonE7 = (lo * 1e7).roundToInt())
+        }
+    }
+
+    fun moveWaypointDone(index: Int) {
+        if (index !in waypoints.indices) return
+        persist()
+        scheduleProfile()
+        status = "Moved point ${index + 1}"
+    }
+
     fun updateSelected(change: (Waypoint) -> Waypoint) {
         val i = selected ?: return
         update(waypoints.toMutableList().also { it[i] = change(it[i]) })
@@ -518,6 +593,7 @@ private fun MissionScreen(vm: MissionViewModel = viewModel()) {
     var showOffline by remember { mutableStateOf(false) }
     var showAbout by remember { mutableStateOf(false) }
     var showBluetooth by remember { mutableStateOf(false) }
+    var showHome by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val locationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { vm.locate() }
     val saveFile = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(MissionFiles.CREATE_MIME)) { uri -> if (uri != null) vm.saveToFile(uri) }
@@ -532,6 +608,8 @@ private fun MissionScreen(vm: MissionViewModel = viewModel()) {
                 selected = vm.selected,
                 onMapTap = vm::addWaypoint,
                 onSelect = vm::select,
+                onMoveWaypoint = vm::moveWaypointLive,
+                onMoveEnd = vm::moveWaypointDone,
                 onViewportChanged = vm::onViewportChanged,
                 mapStyle = mapStyle,
                 fitRequest = vm.fitRequest,
@@ -620,6 +698,7 @@ private fun MissionScreen(vm: MissionViewModel = viewModel()) {
                 onShare = { context.startActivity(MissionFiles.shareChooser(context, vm.missionXml())) },
                 onAbout = { showAbout = true },
                 onBluetooth = { showBluetooth = true },
+                onHome = { showHome = true },
                 onUpload = { save ->
                     // Warnings never block an upload: show them once, then let the user decide.
                     val warnings = vm.uploadWarnings()
@@ -686,6 +765,7 @@ private fun MissionScreen(vm: MissionViewModel = viewModel()) {
     if (showOffline) OfflineMapsDialog(vm, onDismiss = { showOffline = false })
     if (showAbout) AboutDialog(onDismiss = { showAbout = false })
     if (showBluetooth) BluetoothDialog(vm, onDismiss = { showBluetooth = false })
+    if (showHome) HomeDialog(vm, onDismiss = { showHome = false })
 
     pendingUpload?.let { save ->
         AlertDialog(
@@ -750,6 +830,7 @@ private fun ActionBar(
     onUpload: (saveToEeprom: Boolean) -> Unit,
     onAbout: () -> Unit,
     onBluetooth: () -> Unit,
+    onHome: () -> Unit,
 ) {
     var menu by remember { mutableStateOf(false) }
     Row(
@@ -786,18 +867,8 @@ private fun ActionBar(
                     onClick = { menu = false; onShare() },
                 )
                 DropdownMenuItem(
-                    text = { Text("Set home at map center") },
-                    onClick = { menu = false; vm.setHomeAtMapCenter() },
-                )
-                DropdownMenuItem(
-                    text = { Text("Set home at my position (after Locate)") },
-                    enabled = vm.locateResult != null,
-                    onClick = { menu = false; vm.setHomeAtMyPosition() },
-                )
-                DropdownMenuItem(
-                    text = { Text("Clear home") },
-                    enabled = vm.home != null,
-                    onClick = { menu = false; vm.clearHome() },
+                    text = { Text(if (vm.home == null) "Home point… (not set)" else "Home point…") },
+                    onClick = { menu = false; onHome() },
                 )
                 DropdownMenuItem(
                     text = { Text("Add RTH at end") },
