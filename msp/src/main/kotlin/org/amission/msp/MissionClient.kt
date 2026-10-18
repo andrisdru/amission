@@ -6,6 +6,8 @@ interface MspLink {
     fun request(command: Int, payload: ByteArray = ByteArray(0)): ByteArray
 }
 
+class DownloadResult(val waypoints: List<Waypoint>, val loadedFromStorage: Boolean, val loadRejected: Boolean)
+
 /** Mission operations on top of an [MspLink]. Call from a background thread. */
 class MissionClient(private val link: MspLink) {
 
@@ -14,6 +16,24 @@ class MissionClient(private val link: MspLink) {
     fun download(): List<Waypoint> {
         val info = info()
         return (1..info.waypointCount).map { downloadOne(it) }
+    }
+
+    /**
+     * Reads the mission in the FC's working memory. INAV keeps a saved mission in EEPROM and only
+     * copies it into working memory at boot (if enabled) or on request, so when memory is empty
+     * this asks the FC to load its saved mission first. The FC refuses that while armed or when
+     * no valid mission is stored; that is reported via [DownloadResult.loadRejected], not thrown.
+     */
+    fun downloadOrLoadStored(): DownloadResult {
+        if (info().waypointCount > 0) return DownloadResult(download(), loadedFromStorage = false, loadRejected = false)
+        try {
+            loadFromEeprom()
+        } catch (e: MspTimeoutException) {
+            throw e
+        } catch (e: MspException) {
+            return DownloadResult(emptyList(), loadedFromStorage = false, loadRejected = true)
+        }
+        return DownloadResult(download(), loadedFromStorage = true, loadRejected = false)
     }
 
     private fun downloadOne(number: Int): Waypoint =

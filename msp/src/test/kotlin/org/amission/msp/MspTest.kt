@@ -4,6 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -11,6 +12,8 @@ import kotlin.test.assertTrue
 /** In-memory stand-in for an FC's mission storage. */
 private class FakeFc(var max: Int = 120, val corruptReadBack: Boolean = false) : MspLink {
     val stored = sortedMapOf<Int, ByteArray>()
+    /** Mission saved in "EEPROM"; copied into [stored] by WP_MISSION_LOAD, rejected when empty. */
+    val eeprom = sortedMapOf<Int, ByteArray>()
     var saved = false
 
     override fun request(command: Int, payload: ByteArray): ByteArray = when (command) {
@@ -21,6 +24,10 @@ private class FakeFc(var max: Int = 120, val corruptReadBack: Boolean = false) :
             if (corruptReadBack) data.copyOf().also { it[2] = (it[2] + 1).toByte() } else data
         }
         Msp.WP_MISSION_SAVE -> { saved = true; ByteArray(0) }
+        Msp.WP_MISSION_LOAD -> {
+            if (eeprom.isEmpty()) throw MspException("FC rejected command ${Msp.WP_MISSION_LOAD}")
+            stored.clear(); stored.putAll(eeprom); ByteArray(0)
+        }
         else -> throw MspException("unexpected command $command")
     }
 }
@@ -132,6 +139,33 @@ class MissionClientTest {
     @Test
     fun refusesEmptyMission() {
         assertFailsWith<MspException> { MissionClient(FakeFc()).uploadAndVerify(emptyList()) }
+    }
+
+    @Test
+    fun downloadLoadsSavedMissionWhenWorkingMemoryIsEmpty() {
+        val fc = FakeFc()
+        MissionClient.normalize(mission()).forEach { fc.eeprom[it.number] = it.encode() }
+        val result = MissionClient(fc).downloadOrLoadStored()
+        assertEquals(3, result.waypoints.size)
+        assertTrue(result.loadedFromStorage)
+        assertFalse(result.loadRejected)
+    }
+
+    @Test
+    fun downloadDoesNotReloadWhenMemoryAlreadyHoldsAMission() {
+        val fc = FakeFc()
+        val client = MissionClient(fc)
+        client.uploadAndVerify(mission())
+        val result = client.downloadOrLoadStored()
+        assertEquals(3, result.waypoints.size)
+        assertFalse(result.loadedFromStorage)
+    }
+
+    @Test
+    fun downloadReportsRejectedLoadInsteadOfThrowing() {
+        val result = MissionClient(FakeFc()).downloadOrLoadStored()
+        assertTrue(result.waypoints.isEmpty())
+        assertTrue(result.loadRejected)
     }
 
     @Test
