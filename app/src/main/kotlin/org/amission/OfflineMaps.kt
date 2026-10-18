@@ -1,6 +1,8 @@
 package org.amission
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -79,6 +81,12 @@ class OfflineMaps(private val context: Context) {
 
     private var active: OfflineRegion? = null
 
+    init {
+        // Earlier builds wrote the satellite style, which contains the user's imagery key, to a file for the download.
+        // That never worked and is no longer used, so remove any left over.
+        context.filesDir.listFiles { f -> f.name.startsWith("offline_style_") }?.forEach { it.delete() }
+    }
+
     private val manager: OfflineManager by lazy {
         MapSdk.init(context)
         OfflineManager.getInstance(context)
@@ -121,13 +129,40 @@ class OfflineMaps(private val context: Context) {
         )
     }
 
-    /** The style URL MapLibre should fetch for [config]; satellite styles are written to a local file. */
-    fun styleUrlFor(config: MapConfig): String = when (val s = MapStyles.styleFor(config)) {
-        is MapStyle.Url -> s.url
-        is MapStyle.Json -> {
-            val file = File(context.filesDir, "offline_style_${s.json.hashCode().toUInt()}.json")
-            if (!file.exists()) file.writeText(s.json)
-            "file://${file.absolutePath}"
+    /** Serves the satellite style to the downloader while a download runs; null for the street style. */
+    private var styleServer: LocalStyleServer? = null
+    private val handler = Handler(Looper.getMainLooper())
+    private var lastProgressAt = 0L
+    private var lastCompleted = -1L
+
+    private fun stopStyleServer() {
+        styleServer?.close()
+        styleServer = null
+    }
+
+    /**
+     * The style address the downloader should fetch for [config]. The street style has a web address. The satellite
+     * style is built in the app, so it is served from the phone itself (see [LocalStyleServer]); a file:// address
+     * does not work for downloads.
+     */
+    private fun prepareStyleUrl(config: MapConfig): String {
+        stopStyleServer()
+        return when (val s = MapStyles.styleFor(config)) {
+            is MapStyle.Url -> s.url
+            is MapStyle.Json -> LocalStyleServer(s.json).also { styleServer = it }.url
+        }
+    }
+
+    /** Ends a download that has stopped making progress, so the dialog never sits at a percentage forever. */
+    private val watchdog = object : Runnable {
+        override fun run() {
+            if (progress == null) return
+            if (System.currentTimeMillis() - lastProgressAt > STALL_MS) {
+                message = "The download stopped making progress and was cancelled. Check the internet connection and try again."
+                cancel(keepMessage = true)
+            } else {
+                handler.postDelayed(this, 5_000)
+            }
         }
     }
 
@@ -135,12 +170,16 @@ class OfflineMaps(private val context: Context) {
         if (progress != null) return
         val bounds = LatLngBounds.Builder().include(LatLng(v.south, v.west)).include(LatLng(v.north, v.east)).build()
         val definition = OfflineTilePyramidRegionDefinition(
-            styleUrlFor(config), bounds, minZoom.toDouble(), maxZoom.toDouble(), context.resources.displayMetrics.density,
+            prepareStyleUrl(config), bounds, minZoom.toDouble(), maxZoom.toDouble(), context.resources.displayMetrics.density,
         )
         val metadata = JSONObject().put("name", name).put("layer", layerLabel).put("createdAt", System.currentTimeMillis())
             .toString().toByteArray()
         progress = 0f
         message = null
+        lastProgressAt = System.currentTimeMillis()
+        lastCompleted = -1L
+        handler.removeCallbacks(watchdog)
+        handler.postDelayed(watchdog, 5_000)
         manager.createOfflineRegion(definition, metadata, object : OfflineManager.CreateOfflineRegionCallback {
             override fun onCreate(offlineRegion: OfflineRegion) {
                 active = offlineRegion
@@ -148,11 +187,17 @@ class OfflineMaps(private val context: Context) {
                     override fun onStatusChanged(status: OfflineRegionStatus) {
                         val required = status.requiredResourceCount
                         progress = if (required > 0) status.completedResourceCount.toFloat() / required else 0f
+                        if (status.completedResourceCount != lastCompleted) {
+                            lastCompleted = status.completedResourceCount
+                            lastProgressAt = System.currentTimeMillis()
+                        }
                         if (status.isComplete) {
                             offlineRegion.setDownloadState(OfflineRegion.STATE_INACTIVE)
                             offlineRegion.setObserver(null)
                             active = null
                             progress = null
+                            handler.removeCallbacks(watchdog)
+                            stopStyleServer()
                             message = "Saved \"$name\" (${formatMb(status.completedResourceSize)})"
                             refresh()
                         }
@@ -169,19 +214,27 @@ class OfflineMaps(private val context: Context) {
                 offlineRegion.setDownloadState(OfflineRegion.STATE_ACTIVE)
             }
 
-            override fun onError(error: String) { progress = null; message = "Could not start the download: $error" }
+            override fun onError(error: String) {
+                progress = null
+                handler.removeCallbacks(watchdog)
+                stopStyleServer()
+                message = "Could not start the download: $error"
+            }
         })
     }
 
     /** Stops a running download and removes the partial area. */
-    fun cancel() {
-        val r = active ?: return
+    fun cancel(keepMessage: Boolean = false) {
+        handler.removeCallbacks(watchdog)
+        stopStyleServer()
+        val r = active
+        progress = null
+        if (r == null) { if (!keepMessage) message = "Download cancelled"; return }
         r.setDownloadState(OfflineRegion.STATE_INACTIVE)
         r.setObserver(null)
         active = null
-        progress = null
         r.delete(object : OfflineRegion.OfflineRegionDeleteCallback {
-            override fun onDelete() { message = "Download cancelled"; refresh() }
+            override fun onDelete() { if (!keepMessage) message = "Download cancelled"; refresh() }
             override fun onError(error: String) { message = "Cancelled, but cleanup failed: $error" }
         })
     }
@@ -198,13 +251,15 @@ private fun formatMb(bytes: Long): String = String.format(Locale.US, "%.1f MB", 
 
 // Satellite imagery limits are the user's provider's business; this only stops runaway downloads.
 private const val MAX_SATELLITE_TILES = 25_000L
+// A download that completes no new resource for this long is treated as stuck (no internet, or the style could not load).
+private const val STALL_MS = 30_000L
 // OpenFreeMap's terms (checked 2026-10) allow an app to offer offline areas of at most 3,000 tiles or 50 MB per
 // download, with at most 4 parallel requests and an identifying User-Agent (see MapSdk).
 private const val MAX_STREET_TILES = 3_000L
 private const val MAX_STREET_MB = 50.0
 // Rough averages for the size preview: measured 22 KB per tile in rural land (max 35 KB); built-up areas are larger.
 private const val STREET_KB_PER_TILE = 40
-private const val SATELLITE_KB_PER_TILE = 40
+private const val SATELLITE_KB_PER_TILE = 45
 // The street vector tiles stop at this zoom; deeper levels are drawn from it, so nothing is gained by fetching more.
 private const val STREET_MAX_ZOOM = 14
 // Measured: the street style's fonts (every glyph range) are about 17-18 MB, stored once and shared by every later Street area.
@@ -227,7 +282,9 @@ fun OfflineMapsDialog(vm: MissionViewModel, onDismiss: () -> Unit) {
 
     val maxZoom = if (satellite) satMaxZoom else STREET_MAX_ZOOM
     val minZoom = viewport?.let { min(max(6, floor(it.zoom).toInt() - 3), maxZoom) } ?: maxZoom
-    val tiles = viewport?.let { TileMath.tileCount(it.south, it.west, it.north, it.east, minZoom, maxZoom) } ?: 0L
+    // Imagery comes in 256 px tiles, which the map fetches one zoom level deeper than the map zoom (see TileMath.tileZoomOffset).
+    val tileOffset = if (satellite) TileMath.tileZoomOffset(MapStyles.SATELLITE_TILE_SIZE) else 0
+    val tiles = viewport?.let { TileMath.tileCount(it.south, it.west, it.north, it.east, minZoom + tileOffset, maxZoom + tileOffset) } ?: 0L
     val needsFonts = !satellite && offline.regions.none { it.layer == "Street" }
     val estimatedMb = tiles * (if (satellite) SATELLITE_KB_PER_TILE else STREET_KB_PER_TILE) / 1024.0 + if (needsFonts) STREET_FONTS_MB else 0.0
     val tooBig = if (satellite) tiles > MAX_SATELLITE_TILES else tiles > MAX_STREET_TILES || estimatedMb > MAX_STREET_MB
@@ -241,6 +298,16 @@ fun OfflineMapsDialog(vm: MissionViewModel, onDismiss: () -> Unit) {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Save the area currently on screen so it works without internet.", style = MaterialTheme.typography.bodyMedium)
                 Text("Layer: $layerLabel", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    if (satellite) {
+                        "Without internet the imagery shows only inside the area on screen now and between map zoom " +
+                            "$minZoom and $maxZoom. Zoom in further, zoom out, or pan outside it and the map goes dark."
+                    } else {
+                        "Without internet the map shows only the area on screen now. It stays readable when zoomed in " +
+                            "further, but zooming out past level $minZoom or panning outside leaves it blank."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                )
 
                 if (satellite) {
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {

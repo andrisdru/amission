@@ -60,6 +60,9 @@ sealed interface MapStyle {
 }
 
 object MapStyles {
+    /** Size in pixels of the imagery tiles the satellite style asks for. Decides how deep the tiles are fetched. */
+    const val SATELLITE_TILE_SIZE = 256
+
     private const val STREET_URL = "https://tiles.openfreemap.org/styles/liberty"
 
     fun styleFor(config: MapConfig): MapStyle =
@@ -83,7 +86,7 @@ object MapStyles {
                 JSONObject().put(
                     "imagery",
                     JSONObject().put("type", "raster").put("tiles", JSONArray().put(template))
-                        .put("tileSize", 256).put("maxzoom", maxZoom).put("attribution", attribution),
+                        .put("tileSize", SATELLITE_TILE_SIZE).put("maxzoom", maxZoom).put("attribution", attribution),
                 ),
             )
             .put("layers", JSONArray().put(JSONObject().put("id", "imagery").put("type", "raster").put("source", "imagery")))
