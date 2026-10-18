@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -22,6 +23,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -57,6 +60,15 @@ import kotlin.math.roundToInt
  */
 class MissionViewModel(app: Application) : AndroidViewModel(app) {
     private val store = MissionStore(app)
+    private val mapSettings = MapSettingsStore(app)
+
+    var mapConfig by mutableStateOf(mapSettings.load())
+        private set
+
+    fun updateMapConfig(config: MapConfig) {
+        mapConfig = config
+        mapSettings.save(config)
+    }
 
     var waypoints by mutableStateOf(store.load())
         private set
@@ -72,6 +84,12 @@ class MissionViewModel(app: Application) : AndroidViewModel(app) {
         selected = sel?.takeIf { it in waypoints.indices }
         store.save(waypoints)
     }
+
+    /** Bumped to ask the map to zoom to the mission; starts at 1 when there is already a mission to show. */
+    var fitRequest by mutableIntStateOf(if (waypoints.any { it.action.hasPosition }) 1 else 0)
+        private set
+
+    fun requestFit() { fitRequest++ }
 
     /** Home position (lat, lon) for the "Grd Dist" row. Not known until set; null shows "NO HOME". */
     var home by mutableStateOf<Pair<Double, Double>?>(null)
@@ -89,6 +107,19 @@ class MissionViewModel(app: Application) : AndroidViewModel(app) {
             altitudeCm = waypoints.lastOrNull { it.action.hasPosition }?.altitudeCm ?: DEFAULT_ALTITUDE_CM,
         )
         update(waypoints + wp, sel = waypoints.size)
+    }
+
+    /** Appends an RTH as the final point (altitude copied from the last positioned waypoint) and selects it. */
+    fun addRthAtEnd() {
+        if (waypoints.lastOrNull()?.action == WaypointAction.RTH) {
+            selected = waypoints.lastIndex
+            status = "Mission already ends with RTH"
+            return
+        }
+        val alt = waypoints.lastOrNull { it.action.hasPosition }?.altitudeCm ?: DEFAULT_ALTITUDE_CM
+        val rth = Waypoint(number = 0, action = WaypointAction.RTH, latE7 = 0, lonE7 = 0, altitudeCm = alt)
+        update(waypoints + rth, sel = waypoints.size)
+        status = "Added RTH as point ${waypoints.size}"
     }
 
     fun addAtMapCenter() {
@@ -136,10 +167,19 @@ class MissionViewModel(app: Application) : AndroidViewModel(app) {
         if (saveToEeprom) "Uploaded, verified and saved to FC" else "Uploaded and verified (not saved to EEPROM)"
     }
 
+    /** Reads the FC's mission, loading its saved (EEPROM) mission first if working memory is empty. */
     fun downloadFromFc() = withFc("Downloading…") { client ->
-        val wps = client.download()
-        withContext(Dispatchers.Main) { update(wps, sel = null) }
-        "Downloaded ${wps.size} waypoints from FC"
+        val result = client.downloadOrLoadStored()
+        when {
+            result.loadRejected ->
+                "FC has no mission in memory and refused to load a saved one (none stored, invalid, or armed). Your mission was not changed."
+            result.waypoints.isEmpty() -> "FC has no waypoints. Your mission was not changed."
+            else -> {
+                withContext(Dispatchers.Main) { update(result.waypoints, sel = null); requestFit() }
+                val src = if (result.loadedFromStorage) " (loaded from the FC's saved mission)" else ""
+                "Downloaded ${result.waypoints.size} waypoints$src"
+            }
+        }
     }
 
     private fun withFc(progress: String, block: suspend (MissionClient) -> String) {
@@ -182,19 +222,66 @@ private fun MissionScreen(vm: MissionViewModel = viewModel()) {
     var expanded by rememberSaveable { mutableStateOf(true) }
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var confirmClear by remember { mutableStateOf(false) }
+    var confirmDownload by remember { mutableStateOf(false) }
     // Selecting a waypoint (map tap or table row) brings its editor up.
     LaunchedEffect(vm.selected) { if (vm.selected != null) { tab = 0; expanded = true } }
     val maxPanelHeight = (LocalConfiguration.current.screenHeightDp * 0.45f).dp
 
+    var showMapSettings by remember { mutableStateOf(false) }
+    var openedForSatellite by remember { mutableStateOf(false) }
+    val mapStyle = remember(vm.mapConfig) { MapStyles.styleFor(vm.mapConfig) }
+
     Column(Modifier.fillMaxSize()) {
-        MissionMap(
-            waypoints = vm.waypoints,
-            selected = vm.selected,
-            onMapTap = vm::addWaypoint,
-            onSelect = vm::select,
-            onCenterChanged = vm::onMapCenterChanged,
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-        )
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            MissionMap(
+                waypoints = vm.waypoints,
+                selected = vm.selected,
+                onMapTap = vm::addWaypoint,
+                onSelect = vm::select,
+                onCenterChanged = vm::onMapCenterChanged,
+                mapStyle = mapStyle,
+                fitRequest = vm.fitRequest,
+                modifier = Modifier.fillMaxSize(),
+            )
+            Row(
+                Modifier.align(Alignment.TopStart).statusBarsPadding().padding(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                FilterChip(
+                    selected = vm.mapConfig.layer == MapLayer.STREET,
+                    onClick = { vm.updateMapConfig(vm.mapConfig.copy(layer = MapLayer.STREET)) },
+                    label = { Text("Street") },
+                    colors = overlayChipColors(),
+                )
+                FilterChip(
+                    selected = vm.mapConfig.layer == MapLayer.SATELLITE,
+                    onClick = {
+                        if (vm.mapConfig.satelliteReady) {
+                            vm.updateMapConfig(vm.mapConfig.copy(layer = MapLayer.SATELLITE))
+                        } else {
+                            openedForSatellite = true
+                            showMapSettings = true
+                        }
+                    },
+                    label = { Text("Satellite") },
+                    colors = overlayChipColors(),
+                )
+                FilterChip(
+                    selected = false,
+                    onClick = vm::requestFit,
+                    label = { Text("Fit") },
+                    enabled = vm.waypoints.any { it.action.hasPosition },
+                    colors = overlayChipColors(),
+                )
+                FilterChip(
+                    selected = false,
+                    onClick = { openedForSatellite = false; showMapSettings = true },
+                    label = { Text("⚙") },
+                    colors = overlayChipColors(),
+                )
+            }
+        }
         Column(Modifier.fillMaxWidth().navigationBarsPadding()) {
             Text(
                 vm.status,
@@ -202,7 +289,12 @@ private fun MissionScreen(vm: MissionViewModel = viewModel()) {
                 maxLines = 2,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
             )
-            ActionBar(vm, onClear = { confirmClear = true })
+            ActionBar(
+                vm,
+                // A download replaces the local mission, so ask first if there is one.
+                onDownload = { if (vm.waypoints.isEmpty()) vm.downloadFromFc() else confirmDownload = true },
+                onClear = { confirmClear = true },
+            )
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -234,6 +326,30 @@ private fun MissionScreen(vm: MissionViewModel = viewModel()) {
         }
     }
 
+    if (showMapSettings) {
+        MapSettingsDialog(
+            initial = vm.mapConfig,
+            promptForSatellite = openedForSatellite,
+            onDismiss = { showMapSettings = false },
+            onSave = { cfg ->
+                // Opening Settings from the Satellite chip means the user wants satellite once it is usable.
+                val next = if (openedForSatellite && cfg.satelliteReady) cfg.copy(layer = MapLayer.SATELLITE) else cfg
+                vm.updateMapConfig(next)
+                showMapSettings = false
+            },
+        )
+    }
+
+    if (confirmDownload) {
+        AlertDialog(
+            onDismissRequest = { confirmDownload = false },
+            title = { Text("Replace mission?") },
+            text = { Text("Downloading replaces the ${vm.waypoints.size} waypoints on this device with the mission from the FC.") },
+            confirmButton = { TextButton(onClick = { confirmDownload = false; vm.downloadFromFc() }) { Text("Download") } },
+            dismissButton = { TextButton(onClick = { confirmDownload = false }) { Text("Cancel") } },
+        )
+    }
+
     if (confirmClear) {
         AlertDialog(
             onDismissRequest = { confirmClear = false },
@@ -246,7 +362,7 @@ private fun MissionScreen(vm: MissionViewModel = viewModel()) {
 }
 
 @Composable
-private fun ActionBar(vm: MissionViewModel, onClear: () -> Unit) {
+private fun ActionBar(vm: MissionViewModel, onDownload: () -> Unit, onClear: () -> Unit) {
     var menu by remember { mutableStateOf(false) }
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 8.dp),
@@ -258,7 +374,7 @@ private fun ActionBar(vm: MissionViewModel, onClear: () -> Unit) {
             enabled = !vm.busy && vm.waypoints.isNotEmpty(),
             modifier = Modifier.weight(1f),
         ) { Text("Upload") }
-        OutlinedButton(onClick = vm::downloadFromFc, enabled = !vm.busy, modifier = Modifier.weight(1f)) { Text("Download") }
+        OutlinedButton(onClick = onDownload, enabled = !vm.busy, modifier = Modifier.weight(1f)) { Text("Download") }
         Box {
             TextButton(onClick = { menu = true }) { Text("More ▾") }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
@@ -268,6 +384,11 @@ private fun ActionBar(vm: MissionViewModel, onClear: () -> Unit) {
                     onClick = { menu = false; vm.uploadToFc(saveToEeprom = true) },
                 )
                 DropdownMenuItem(
+                    text = { Text("Add RTH at end") },
+                    enabled = vm.waypoints.isNotEmpty(),
+                    onClick = { menu = false; vm.addRthAtEnd() },
+                )
+                DropdownMenuItem(
                     text = { Text("Clear mission") },
                     enabled = vm.waypoints.isNotEmpty(),
                     onClick = { menu = false; onClear() },
@@ -275,4 +396,58 @@ private fun ActionBar(vm: MissionViewModel, onClear: () -> Unit) {
             }
         }
     }
+}
+
+@Composable
+private fun overlayChipColors() = FilterChipDefaults.filterChipColors(
+    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+    labelColor = MaterialTheme.colorScheme.onSurface,
+)
+
+/** Satellite imagery needs the user's own provider key or tile URL; nothing is bundled in the app. */
+@Composable
+private fun MapSettingsDialog(
+    initial: MapConfig,
+    promptForSatellite: Boolean,
+    onDismiss: () -> Unit,
+    onSave: (MapConfig) -> Unit,
+) {
+    var provider by remember { mutableStateOf(initial.provider) }
+    var key by remember { mutableStateOf(initial.apiKey) }
+    var url by remember { mutableStateOf(initial.customUrl) }
+    val candidate = initial.copy(provider = provider, apiKey = key, customUrl = url)
+    val urlProblem = provider == SatelliteProvider.CUSTOM && url.isNotBlank() && !MapConfig.isValidTemplate(url)
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Satellite imagery") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (promptForSatellite) Text("Satellite needs imagery from a provider you have an account with.")
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    SatelliteProvider.entries.forEach { p ->
+                        FilterChip(selected = provider == p, onClick = { provider = p }, label = { Text(p.label) })
+                    }
+                }
+                if (provider == SatelliteProvider.CUSTOM) {
+                    OutlinedTextField(
+                        value = url, onValueChange = { url = it }, label = { Text("Tile URL (https, {z}/{x}/{y})") },
+                        isError = urlProblem, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                    )
+                } else {
+                    OutlinedTextField(
+                        value = key, onValueChange = { key = it.trim() }, label = { Text("${provider.label} API key") },
+                        singleLine = true, modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                Text(
+                    "The key is stored only on this device. Providers set their own limits and terms, " +
+                        "including whether tiles may be saved for offline use.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = { onSave(candidate) }, enabled = !urlProblem) { Text("Save") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }

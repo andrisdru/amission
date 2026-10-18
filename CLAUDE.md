@@ -35,4 +35,4 @@ $env:JAVA_HOME="C:\Program Files\Android\Android Studio\jbr"
 
 ## Planned, not yet built
 
-Map base style is currently a fixed online OpenFreeMap style (needs internet). Still to do: switchable street/terrain and satellite layers, per-waypoint action/speed editing, drag to move waypoints, mission library, offline region download, bring-your-own tile API key (no keys in the repo), MBTiles/PMTiles import, Bluetooth transport (FC Bluetooth is on UART3; Classic vs BLE still unconfirmed), mission XML import/export.
+Map layers: Street is the keyless OpenFreeMap style; Satellite is a raster style built in `MapSettings.kt` from the user's own MapTiler/Mapbox key or a custom `{z}/{x}/{y}` template (stored in app-private SharedPreferences, never in the repo). Both need internet for now. Switching styles drops the mission layers, so `MissionMap` re-adds them on every style change. Still to do: offline region download, drag to move waypoints, mission library, offline region download, bring-your-own tile API key (no keys in the repo), MBTiles/PMTiles import, Bluetooth transport (FC Bluetooth is on UART3; Classic vs BLE still unconfirmed), mission XML import/export.

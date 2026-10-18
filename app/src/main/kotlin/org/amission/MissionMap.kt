@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.PointF
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -40,13 +41,14 @@ import org.maplibre.android.style.layers.PropertyFactory.textFont
 import org.maplibre.android.style.layers.PropertyFactory.textSize
 import org.maplibre.android.style.layers.SymbolLayer
 import org.maplibre.android.style.sources.GeoJsonSource
+import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
+import org.maplibre.android.geometry.LatLngBounds
 import org.maplibre.geojson.Feature
 import org.maplibre.geojson.FeatureCollection
 import org.maplibre.geojson.LineString
 import org.maplibre.geojson.Point
 
-private const val STYLE_URL = "https://tiles.openfreemap.org/styles/liberty"
 private const val SRC_POINTS = "wp-points"
 private const val SRC_LINE = "wp-line"
 private const val LAYER_POINTS = "wp-points-layer"
@@ -59,6 +61,8 @@ fun MissionMap(
     onMapTap: (lat: Double, lon: Double) -> Unit,
     onSelect: (index: Int) -> Unit,
     onCenterChanged: (lat: Double, lon: Double) -> Unit,
+    mapStyle: MapStyle,
+    fitRequest: Int,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -85,10 +89,6 @@ fun MissionMap(
         lifecycle.addObserver(observer)
         mapView.getMapAsync { m ->
             map = m
-            m.setStyle(Style.Builder().fromUri(STYLE_URL)) { style ->
-                addMissionLayers(style)
-                styleReady = true
-            }
             m.addOnCameraIdleListener {
                 m.cameraPosition.target?.let { centerChanged(it.latitude, it.longitude) }
             }
@@ -103,6 +103,37 @@ fun MissionMap(
         onDispose {
             lifecycle.removeObserver(observer)
             mapView.onPause(); mapView.onStop(); mapView.onDestroy()
+        }
+    }
+
+    // Zoom to the mission whenever a fit is requested (after a download, on start, or via the Fit chip).
+    val currentWaypoints by rememberUpdatedState(waypoints)
+    LaunchedEffect(map, fitRequest) {
+        val m = map ?: return@LaunchedEffect
+        if (fitRequest == 0) return@LaunchedEffect
+        val pts = currentWaypoints.filter { it.action.hasPosition }
+        if (pts.isEmpty()) return@LaunchedEffect
+        val latSpan = pts.maxOf { it.latitude } - pts.minOf { it.latitude }
+        val lonSpan = pts.maxOf { it.longitude } - pts.minOf { it.longitude }
+        if (latSpan < 1e-5 && lonSpan < 1e-5) {
+            m.easeCamera(CameraUpdateFactory.newLatLngZoom(LatLng(pts[0].latitude, pts[0].longitude), 16.0))
+        } else {
+            val bounds = LatLngBounds.Builder().apply { pts.forEach { include(LatLng(it.latitude, it.longitude)) } }.build()
+            m.easeCamera(CameraUpdateFactory.newLatLngBounds(bounds, 140))
+        }
+    }
+
+    // Initial style and every layer switch: replacing the style drops our mission layers, so re-add them.
+    LaunchedEffect(map, mapStyle) {
+        val m = map ?: return@LaunchedEffect
+        styleReady = false
+        val builder = when (mapStyle) {
+            is MapStyle.Url -> Style.Builder().fromUri(mapStyle.url)
+            is MapStyle.Json -> Style.Builder().fromJson(mapStyle.json)
+        }
+        m.setStyle(builder) { style ->
+            addMissionLayers(style)
+            styleReady = true
         }
     }
 
