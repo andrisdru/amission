@@ -7,6 +7,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -98,7 +100,16 @@ class MissionViewModel(app: Application) : AndroidViewModel(app) {
     /** Last map camera centre, used by the table's "+" button. */
     private var mapCenter: Pair<Double, Double>? = null
 
-    fun onMapCenterChanged(lat: Double, lon: Double) { mapCenter = lat to lon }
+    /** The area currently visible on the map; the offline download dialog saves exactly this. */
+    var viewport by mutableStateOf<Viewport?>(null)
+        private set
+
+    val offline = OfflineMaps(app)
+
+    fun onViewportChanged(v: Viewport) {
+        viewport = v
+        mapCenter = (v.south + v.north) / 2 to (v.west + v.east) / 2
+    }
 
     fun addWaypoint(lat: Double, lon: Double) {
         val wp = Waypoint(
@@ -217,6 +228,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun MissionScreen(vm: MissionViewModel = viewModel()) {
     var expanded by rememberSaveable { mutableStateOf(true) }
@@ -228,6 +240,7 @@ private fun MissionScreen(vm: MissionViewModel = viewModel()) {
     val maxPanelHeight = (LocalConfiguration.current.screenHeightDp * 0.45f).dp
 
     var showMapSettings by remember { mutableStateOf(false) }
+    var showOffline by remember { mutableStateOf(false) }
     var openedForSatellite by remember { mutableStateOf(false) }
     val mapStyle = remember(vm.mapConfig) { MapStyles.styleFor(vm.mapConfig) }
 
@@ -238,15 +251,16 @@ private fun MissionScreen(vm: MissionViewModel = viewModel()) {
                 selected = vm.selected,
                 onMapTap = vm::addWaypoint,
                 onSelect = vm::select,
-                onCenterChanged = vm::onMapCenterChanged,
+                onViewportChanged = vm::onViewportChanged,
                 mapStyle = mapStyle,
                 fitRequest = vm.fitRequest,
                 modifier = Modifier.fillMaxSize(),
             )
-            Row(
+            FlowRow(
                 Modifier.align(Alignment.TopStart).statusBarsPadding().padding(8.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                verticalArrangement = Arrangement.spacedBy(0.dp),
+                itemVerticalAlignment = Alignment.CenterVertically,
             ) {
                 FilterChip(
                     selected = vm.mapConfig.layer == MapLayer.STREET,
@@ -272,6 +286,12 @@ private fun MissionScreen(vm: MissionViewModel = viewModel()) {
                     onClick = vm::requestFit,
                     label = { Text("Fit") },
                     enabled = vm.waypoints.any { it.action.hasPosition },
+                    colors = overlayChipColors(),
+                )
+                FilterChip(
+                    selected = false,
+                    onClick = { showOffline = true },
+                    label = { Text("Offline") },
                     colors = overlayChipColors(),
                 )
                 FilterChip(
@@ -339,6 +359,8 @@ private fun MissionScreen(vm: MissionViewModel = viewModel()) {
             },
         )
     }
+
+    if (showOffline) OfflineMapsDialog(vm, onDismiss = { showOffline = false })
 
     if (confirmDownload) {
         AlertDialog(

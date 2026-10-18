@@ -61,8 +61,6 @@ sealed interface MapStyle {
 
 object MapStyles {
     private const val STREET_URL = "https://tiles.openfreemap.org/styles/liberty"
-    // Glyphs are needed for the waypoint number labels, which are drawn on every style.
-    private const val GLYPHS = "https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf"
 
     fun styleFor(config: MapConfig): MapStyle =
         if (config.layer == MapLayer.SATELLITE && config.satelliteReady) satellite(config) else MapStyle.Url(STREET_URL)
@@ -80,7 +78,6 @@ object MapStyles {
         }
         val style = JSONObject()
             .put("version", 8)
-            .put("glyphs", GLYPHS)
             .put(
                 "sources",
                 JSONObject().put(

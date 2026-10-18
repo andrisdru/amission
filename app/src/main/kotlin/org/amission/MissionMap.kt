@@ -1,6 +1,9 @@
 package org.amission
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
 import android.graphics.PointF
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -21,24 +24,13 @@ import org.maplibre.android.MapLibre
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
-import org.maplibre.android.style.expressions.Expression.eq
 import org.maplibre.android.style.expressions.Expression.get
-import org.maplibre.android.style.expressions.Expression.literal
-import org.maplibre.android.style.expressions.Expression.switchCase
-import org.maplibre.android.style.expressions.Expression.color
-import org.maplibre.android.style.layers.CircleLayer
 import org.maplibre.android.style.layers.LineLayer
-import org.maplibre.android.style.layers.PropertyFactory.circleColor
-import org.maplibre.android.style.layers.PropertyFactory.circleRadius
-import org.maplibre.android.style.layers.PropertyFactory.circleStrokeColor
-import org.maplibre.android.style.layers.PropertyFactory.circleStrokeWidth
+import org.maplibre.android.style.layers.PropertyFactory.iconAllowOverlap
+import org.maplibre.android.style.layers.PropertyFactory.iconIgnorePlacement
+import org.maplibre.android.style.layers.PropertyFactory.iconImage
 import org.maplibre.android.style.layers.PropertyFactory.lineColor
 import org.maplibre.android.style.layers.PropertyFactory.lineWidth
-import org.maplibre.android.style.layers.PropertyFactory.textAllowOverlap
-import org.maplibre.android.style.layers.PropertyFactory.textColor
-import org.maplibre.android.style.layers.PropertyFactory.textField
-import org.maplibre.android.style.layers.PropertyFactory.textFont
-import org.maplibre.android.style.layers.PropertyFactory.textSize
 import org.maplibre.android.style.layers.SymbolLayer
 import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.android.camera.CameraUpdateFactory
@@ -60,18 +52,19 @@ fun MissionMap(
     selected: Int?,
     onMapTap: (lat: Double, lon: Double) -> Unit,
     onSelect: (index: Int) -> Unit,
-    onCenterChanged: (lat: Double, lon: Double) -> Unit,
+    onViewportChanged: (Viewport) -> Unit,
     mapStyle: MapStyle,
     fitRequest: Int,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val mapView = remember { createMapView(context) }
+    val markers = remember { MarkerBitmaps(context.resources.displayMetrics.density) }
     var map by remember { mutableStateOf<MapLibreMap?>(null) }
     var styleReady by remember { mutableStateOf(false) }
     val tap by rememberUpdatedState(onMapTap)
     val select by rememberUpdatedState(onSelect)
-    val centerChanged by rememberUpdatedState(onCenterChanged)
+    val viewportChanged by rememberUpdatedState(onViewportChanged)
 
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     DisposableEffect(lifecycle, mapView) {
@@ -90,7 +83,8 @@ fun MissionMap(
         mapView.getMapAsync { m ->
             map = m
             m.addOnCameraIdleListener {
-                m.cameraPosition.target?.let { centerChanged(it.latitude, it.longitude) }
+                val b = m.projection.visibleRegion.latLngBounds
+                viewportChanged(Viewport(b.latitudeSouth, b.longitudeWest, b.latitudeNorth, b.longitudeEast, m.cameraPosition.zoom))
             }
             m.addOnMapClickListener { latLng ->
                 val screen: PointF = m.projection.toScreenLocation(latLng)
@@ -139,7 +133,7 @@ fun MissionMap(
 
     AndroidView(factory = { mapView }, modifier = modifier) {
         val m = map
-        if (m != null && styleReady) m.getStyle { updateMission(it, waypoints, selected) }
+        if (m != null && styleReady) m.getStyle { updateMission(it, markers, waypoints, selected) }
     }
 }
 
@@ -152,33 +146,26 @@ private fun addMissionLayers(style: Style) {
     style.addSource(GeoJsonSource(SRC_LINE))
     style.addSource(GeoJsonSource(SRC_POINTS))
     style.addLayer(LineLayer("wp-line-layer", SRC_LINE).withProperties(lineColor("#e53935"), lineWidth(3f)))
+    // Markers are drawn from generated bitmaps, not map text, so they never depend on font glyphs
+    // that might not be in the offline cache.
     style.addLayer(
-        CircleLayer(LAYER_POINTS, SRC_POINTS).withProperties(
-            circleRadius(14f),
-            circleColor(switchCase(eq(get("sel"), literal(true)), color(0xFFFFB300.toInt()), color(0xFFE53935.toInt()))),
-            circleStrokeColor("#ffffff"),
-            circleStrokeWidth(2f),
-        )
-    )
-    style.addLayer(
-        SymbolLayer("wp-label-layer", SRC_POINTS).withProperties(
-            textField(get("n")),
-            textSize(13f),
-            textColor("#ffffff"),
-            textAllowOverlap(true),
-            textFont(arrayOf("Noto Sans Regular")),
+        SymbolLayer(LAYER_POINTS, SRC_POINTS).withProperties(
+            iconImage(get("icon")),
+            iconAllowOverlap(true),
+            iconIgnorePlacement(true),
         )
     )
 }
 
-private fun updateMission(style: Style, waypoints: List<Waypoint>, selected: Int?) {
+private fun updateMission(style: Style, markers: MarkerBitmaps, waypoints: List<Waypoint>, selected: Int?) {
     // Jump / Set Head / RTH have no position of their own, so they are not drawn.
     val positioned = waypoints.withIndex().filter { it.value.action.hasPosition }
     val points = positioned.map { (i, w) ->
+        val icon = markers.nameFor(i + 1, i == selected)
+        if (style.getImage(icon) == null) style.addImage(icon, markers.bitmapFor(i + 1, i == selected))
         Feature.fromGeometry(Point.fromLngLat(w.longitude, w.latitude)).also {
             it.addNumberProperty("idx", i)
-            it.addStringProperty("n", (i + 1).toString())
-            it.addBooleanProperty("sel", i == selected)
+            it.addStringProperty("icon", icon)
         }
     }
     style.getSourceAs<GeoJsonSource>(SRC_POINTS)?.setGeoJson(FeatureCollection.fromFeatures(points))
@@ -188,4 +175,29 @@ private fun updateMission(style: Style, waypoints: List<Waypoint>, selected: Int
     style.getSourceAs<GeoJsonSource>(SRC_LINE)?.setGeoJson(
         if (line != null) FeatureCollection.fromFeature(line) else FeatureCollection.fromFeatures(emptyList<Feature>())
     )
+}
+
+/** Numbered round waypoint markers, rendered once per number with the platform canvas. */
+private class MarkerBitmaps(private val density: Float) {
+    fun nameFor(number: Int, selected: Boolean) = (if (selected) "wps-" else "wp-") + number
+
+    fun bitmapFor(number: Int, selected: Boolean): Bitmap {
+        val size = (32 * density).toInt()
+        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        val r = size / 2f
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        paint.color = if (selected) 0xFFFFB300.toInt() else 0xFFE53935.toInt()
+        c.drawCircle(r, r, r - 1.5f * density, paint)
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 2f * density
+        paint.color = 0xFFFFFFFF.toInt()
+        c.drawCircle(r, r, r - 1.5f * density, paint)
+        paint.style = Paint.Style.FILL
+        paint.textAlign = Paint.Align.CENTER
+        paint.textSize = (if (number > 99) 11f else 14f) * density
+        paint.isFakeBoldText = true
+        c.drawText(number.toString(), r, r - (paint.ascent() + paint.descent()) / 2f, paint)
+        return bmp
+    }
 }
