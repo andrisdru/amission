@@ -58,6 +58,7 @@ fun MissionMap(
     selected: Int?,
     onMapTap: (lat: Double, lon: Double) -> Unit,
     onSelect: (index: Int) -> Unit,
+    onCenterChanged: (lat: Double, lon: Double) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -66,6 +67,7 @@ fun MissionMap(
     var styleReady by remember { mutableStateOf(false) }
     val tap by rememberUpdatedState(onMapTap)
     val select by rememberUpdatedState(onSelect)
+    val centerChanged by rememberUpdatedState(onCenterChanged)
 
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     DisposableEffect(lifecycle, mapView) {
@@ -86,6 +88,9 @@ fun MissionMap(
             m.setStyle(Style.Builder().fromUri(STYLE_URL)) { style ->
                 addMissionLayers(style)
                 styleReady = true
+            }
+            m.addOnCameraIdleListener {
+                m.cameraPosition.target?.let { centerChanged(it.latitude, it.longitude) }
             }
             m.addOnMapClickListener { latLng ->
                 val screen: PointF = m.projection.toScreenLocation(latLng)
@@ -136,7 +141,9 @@ private fun addMissionLayers(style: Style) {
 }
 
 private fun updateMission(style: Style, waypoints: List<Waypoint>, selected: Int?) {
-    val points = waypoints.mapIndexed { i, w ->
+    // Jump / Set Head / RTH have no position of their own, so they are not drawn.
+    val positioned = waypoints.withIndex().filter { it.value.action.hasPosition }
+    val points = positioned.map { (i, w) ->
         Feature.fromGeometry(Point.fromLngLat(w.longitude, w.latitude)).also {
             it.addNumberProperty("idx", i)
             it.addStringProperty("n", (i + 1).toString())
@@ -144,8 +151,8 @@ private fun updateMission(style: Style, waypoints: List<Waypoint>, selected: Int
         }
     }
     style.getSourceAs<GeoJsonSource>(SRC_POINTS)?.setGeoJson(FeatureCollection.fromFeatures(points))
-    val line = if (waypoints.size >= 2) {
-        Feature.fromGeometry(LineString.fromLngLats(waypoints.map { Point.fromLngLat(it.longitude, it.latitude) }))
+    val line = if (positioned.size >= 2) {
+        Feature.fromGeometry(LineString.fromLngLats(positioned.map { Point.fromLngLat(it.value.longitude, it.value.latitude) }))
     } else null
     style.getSourceAs<GeoJsonSource>(SRC_LINE)?.setGeoJson(
         if (line != null) FeatureCollection.fromFeature(line) else FeatureCollection.fromFeatures(emptyList<Feature>())
