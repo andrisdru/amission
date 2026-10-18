@@ -13,8 +13,8 @@ android {
         applicationId = "org.amission"
         minSdk = 26
         targetSdk = 36
-        versionCode = 5
-        versionName = "0.1.4"
+        versionCode = 6
+        versionName = "0.1.5"
     }
 
     // Release signing details live in keystore.properties (git-ignored, see .gitignore). Without that file the
