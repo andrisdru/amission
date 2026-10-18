@@ -60,6 +60,15 @@ sealed interface MapStyle {
 }
 
 object MapStyles {
+    // The map engine lists a source's credit in its "i" dialog only when it is written as links, so these are links to the
+    // providers' own credit pages, as MapTiler and Mapbox ask. Plain text here shows nothing at all.
+    private const val ATTRIBUTION_MAPTILER =
+        "<a href=\"https://www.maptiler.com/copyright/\">© MapTiler</a> <a href=\"https://www.openstreetmap.org/copyright\">© OpenStreetMap contributors</a>"
+    private const val ATTRIBUTION_MAPBOX =
+        "<a href=\"https://www.mapbox.com/about/maps/\">© Mapbox</a> <a href=\"https://www.openstreetmap.org/copyright\">© OpenStreetMap contributors</a>"
+    // A custom tile URL has no credit page we could link to; its terms are between the user and that provider.
+    private const val ATTRIBUTION_CUSTOM = "Custom imagery source"
+
     /** Size in pixels of the imagery tiles the satellite style asks for. Decides how deep the tiles are fetched. */
     const val SATELLITE_TILE_SIZE = 256
 
@@ -72,12 +81,12 @@ object MapStyles {
         val key = URLEncoder.encode(c.apiKey.trim(), "UTF-8")
         val (template, attribution, maxZoom) = when (c.provider) {
             SatelliteProvider.MAPTILER -> Triple(
-                "https://api.maptiler.com/tiles/satellite-v2/{z}/{x}/{y}.jpg?key=$key", "© MapTiler © OpenStreetMap contributors", 20,
+                "https://api.maptiler.com/tiles/satellite-v2/{z}/{x}/{y}.jpg?key=$key", ATTRIBUTION_MAPTILER, 20,
             )
             SatelliteProvider.MAPBOX -> Triple(
-                "https://api.mapbox.com/v4/mapbox.satellite/{z}/{x}/{y}@2x.jpg90?access_token=$key", "© Mapbox © OpenStreetMap contributors", 21,
+                "https://api.mapbox.com/v4/mapbox.satellite/{z}/{x}/{y}@2x.jpg90?access_token=$key", ATTRIBUTION_MAPBOX, 21,
             )
-            SatelliteProvider.CUSTOM -> Triple(c.customUrl.trim(), "Custom imagery source", 19)
+            SatelliteProvider.CUSTOM -> Triple(c.customUrl.trim(), ATTRIBUTION_CUSTOM, 19)
         }
         val style = JSONObject()
             .put("version", 8)
