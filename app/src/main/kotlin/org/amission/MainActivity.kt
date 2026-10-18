@@ -1,6 +1,7 @@
 package org.amission
 
 import android.app.Application
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -55,6 +56,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.amission.msp.GpsFix
 import org.amission.msp.MissionClient
+import org.amission.msp.MissionFileException
+import org.amission.msp.MissionImport
+import org.amission.msp.MissionXml
 import org.amission.msp.SerialMspLink
 import org.amission.msp.TelemetryClient
 import org.amission.msp.Waypoint
@@ -123,6 +127,60 @@ class MissionViewModel(app: Application) : AndroidViewModel(app) {
             altitudeCm = waypoints.lastOrNull { it.action.hasPosition }?.altitudeCm ?: DEFAULT_ALTITUDE_CM,
         )
         update(waypoints + wp, sel = waypoints.size)
+    }
+
+    /** A mission read from a file, waiting for the user to confirm replacing the current one. */
+    var pendingImport by mutableStateOf<MissionImport?>(null)
+        private set
+
+    /** The current mission as a Configurator-compatible file, centred on the visible map area. */
+    fun missionXml(): String {
+        val v = viewport
+        return MissionXml.write(
+            waypoints,
+            centerLat = v?.let { (it.south + it.north) / 2 },
+            centerLon = v?.let { (it.west + it.east) / 2 },
+            zoom = v?.zoom?.toInt(),
+        )
+    }
+
+    fun saveToFile(uri: Uri) {
+        val xml = missionXml()
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) { MissionFiles.write(getApplication(), uri, xml) }
+                status = "Saved ${waypoints.size} waypoints to ${MissionFiles.displayName(getApplication(), uri)}"
+            } catch (e: Exception) {
+                status = "Could not save the file: ${e.message}"
+            }
+        }
+    }
+
+    fun openFile(uri: Uri) {
+        viewModelScope.launch {
+            try {
+                val imported = withContext(Dispatchers.IO) { MissionXml.read(MissionFiles.read(getApplication(), uri)) }
+                if (waypoints.isEmpty()) applyImport(imported) else pendingImport = imported
+            } catch (e: MissionFileException) {
+                status = "Could not open that file: ${e.message}"
+            } catch (e: Exception) {
+                status = "Could not read the file: ${e.message}"
+            }
+        }
+    }
+
+    fun confirmImport() {
+        pendingImport?.let { applyImport(it) }
+        pendingImport = null
+    }
+
+    fun cancelImport() { pendingImport = null }
+
+    private fun applyImport(imported: MissionImport) {
+        update(imported.waypoints, sel = null)
+        requestFit()
+        val extra = if (imported.ignoredItems > 0) " (the file held more missions; only the first was opened)" else ""
+        status = "Opened ${imported.waypoints.size} waypoints from file$extra"
     }
 
     /** Appends an RTH as the final point (altitude copied from the last positioned waypoint) and selects it. */
@@ -318,6 +376,8 @@ private fun MissionScreen(vm: MissionViewModel = viewModel()) {
     var showOffline by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val locationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { vm.locate() }
+    val saveFile = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(MissionFiles.CREATE_MIME)) { uri -> if (uri != null) vm.saveToFile(uri) }
+    val openFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) vm.openFile(uri) }
     var openedForSatellite by remember { mutableStateOf(false) }
     val mapStyle = remember(vm.mapConfig) { MapStyles.styleFor(vm.mapConfig) }
 
@@ -402,6 +462,9 @@ private fun MissionScreen(vm: MissionViewModel = viewModel()) {
                 // A download replaces the local mission, so ask first if there is one.
                 onDownload = { if (vm.waypoints.isEmpty()) vm.downloadFromFc() else confirmDownload = true },
                 onClear = { confirmClear = true },
+                onSaveFile = { saveFile.launch(MissionFiles.suggestedName()) },
+                onOpenFile = { openFile.launch(arrayOf("*/*")) },
+                onShare = { context.startActivity(MissionFiles.shareChooser(context, vm.missionXml())) },
             )
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 8.dp),
@@ -460,6 +523,16 @@ private fun MissionScreen(vm: MissionViewModel = viewModel()) {
         )
     }
 
+    vm.pendingImport?.let { imp ->
+        AlertDialog(
+            onDismissRequest = vm::cancelImport,
+            title = { Text("Replace mission?") },
+            text = { Text("Opening the file replaces the ${vm.waypoints.size} waypoints on this device with ${imp.waypoints.size} from the file.") },
+            confirmButton = { TextButton(onClick = vm::confirmImport) { Text("Open") } },
+            dismissButton = { TextButton(onClick = vm::cancelImport) { Text("Cancel") } },
+        )
+    }
+
     if (confirmClear) {
         AlertDialog(
             onDismissRequest = { confirmClear = false },
@@ -472,7 +545,14 @@ private fun MissionScreen(vm: MissionViewModel = viewModel()) {
 }
 
 @Composable
-private fun ActionBar(vm: MissionViewModel, onDownload: () -> Unit, onClear: () -> Unit) {
+private fun ActionBar(
+    vm: MissionViewModel,
+    onDownload: () -> Unit,
+    onClear: () -> Unit,
+    onSaveFile: () -> Unit,
+    onOpenFile: () -> Unit,
+    onShare: () -> Unit,
+) {
     var menu by remember { mutableStateOf(false) }
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 8.dp),
@@ -492,6 +572,20 @@ private fun ActionBar(vm: MissionViewModel, onDownload: () -> Unit, onClear: () 
                     text = { Text("Upload without saving (FC memory only)") },
                     enabled = !vm.busy && vm.waypoints.isNotEmpty(),
                     onClick = { menu = false; vm.uploadToFc(saveToEeprom = false) },
+                )
+                DropdownMenuItem(
+                    text = { Text("Save to file (phone, Drive, pCloud…)") },
+                    enabled = vm.waypoints.isNotEmpty(),
+                    onClick = { menu = false; onSaveFile() },
+                )
+                DropdownMenuItem(
+                    text = { Text("Open from file…") },
+                    onClick = { menu = false; onOpenFile() },
+                )
+                DropdownMenuItem(
+                    text = { Text("Share…") },
+                    enabled = vm.waypoints.isNotEmpty(),
+                    onClick = { menu = false; onShare() },
                 )
                 DropdownMenuItem(
                     text = { Text("Add RTH at end") },
