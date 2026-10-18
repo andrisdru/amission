@@ -139,8 +139,7 @@ private fun ActionFields(vm: MissionViewModel, wp: Waypoint) {
             }
         }
         WaypointAction.RTH -> {
-            AltitudeFields(vm, wp)
-            SeaLevelRow(vm, wp)
+            // INAV starts its normal return-to-home here and does not read this entry's altitude, so none is offered.
             LabeledRow("Land after RTH:") {
                 Switch(checked = wp.p1 != 0, onCheckedChange = { on -> vm.updateSelected { it.copy(p1 = if (on) 1 else 0) } })
             }
@@ -239,6 +238,7 @@ internal fun NumberField(label: String, value: String, intOnly: Boolean = false,
 @Composable
 fun MissionTable(vm: MissionViewModel) {
     Column(Modifier.fillMaxWidth()) {
+        MissionProblems(vm)
         Row(
             Modifier.fillMaxWidth().background(Color(0xFF868E8A)).padding(vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -276,3 +276,20 @@ private fun formatCoord(e7: Int): String =
 
 private fun formatMeters(cm: Int): String =
     if (cm % 100 == 0) "${cm / 100}m" else String.format(Locale.US, "%.2fm", cm / 100.0)
+
+/** Things the FC would accept but that probably are not what was planned, e.g. points after an RTH. */
+@Composable
+fun MissionProblems(vm: MissionViewModel) {
+    val issues = vm.missionIssues
+    if (issues.isEmpty()) return
+    Column(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        issues.forEach { issue ->
+            Text(
+                "⚠ ${issue.message}",
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.fillMaxWidth().let { m -> issue.pointNumber?.let { p -> m.clickable { vm.select(p - 1) } } ?: m },
+            )
+        }
+    }
+}

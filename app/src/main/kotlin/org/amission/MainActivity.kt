@@ -59,9 +59,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.amission.msp.GpsFix
 import org.amission.msp.FlightProfileBuilder
+import org.amission.msp.MissionCheck
 import org.amission.msp.MissionClient
 import org.amission.msp.MissionFileException
 import org.amission.msp.MissionImport
+import org.amission.msp.MissionIssue
 import org.amission.msp.MissionXml
 import org.amission.msp.PathVertex
 import org.amission.msp.SerialMspLink
@@ -169,6 +171,20 @@ class MissionViewModel(app: Application) : AndroidViewModel(app) {
 
     val hasClearanceIssues: Boolean get() = (profile as? ProfileState.Ready)?.profile?.hasIssues == true
 
+    /** Planning mistakes such as points after an RTH. Cheap, so recomputed on read. */
+    val missionIssues: List<MissionIssue> get() = MissionCheck.check(waypoints)
+
+    /** Everything worth stopping for before an upload, in plain words. Empty means nothing to warn about. */
+    fun uploadWarnings(): List<String> {
+        val out = ArrayList<String>()
+        missionIssues.forEach { out += it.message }
+        val worst = (profile as? ProfileState.Ready)?.profile?.issues?.minByOrNull { it.lowestAglM }
+        if (worst != null) {
+            out += "Part of the route is lower than $minAglM m above ground: the lowest is ${worst.lowestAglM.toInt()} m near point ${worst.nearWaypoint}."
+        }
+        return out
+    }
+
     private var profileJob: Job? = null
 
     /** Recomputes the terrain profile shortly after the last change, so typing an altitude does not spam lookups. */
@@ -202,6 +218,7 @@ class MissionViewModel(app: Application) : AndroidViewModel(app) {
         private set
 
     val offline = OfflineMaps(app)
+    val connections = FcConnections(app)
 
     fun onViewportChanged(v: Viewport) {
         viewport = v
@@ -342,12 +359,11 @@ class MissionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun readQuadGps(): QuadGps {
-        val app = getApplication<Application>()
-        if (!UsbSerialChannel.isDeviceAttached(app)) return QuadGps.NoDevice
+        if (!connections.canReachFc()) return QuadGps.NoDevice
         return try {
-            UsbSerialChannel.open(app).use { channel ->
+            connections.open().use { link ->
                 withContext(Dispatchers.IO) {
-                    val gps = TelemetryClient(SerialMspLink(channel, timeoutMs = 1000, retries = 1)).gps()
+                    val gps = TelemetryClient(SerialMspLink(link.channel, timeoutMs = 1200, retries = 1)).gps()
                     if (gps.isUsable) QuadGps.Fix(gps) else QuadGps.NoFix(gps)
                 }
             }
@@ -422,9 +438,9 @@ class MissionViewModel(app: Application) : AndroidViewModel(app) {
             busy = true
             status = progress
             try {
-                val channel = UsbSerialChannel.open(getApplication())
-                status = channel.use {
-                    withContext(Dispatchers.IO) { block(MissionClient(SerialMspLink(channel))) }
+                status = connections.open().use { link ->
+                    status = "$progress (${link.description})"
+                    withContext(Dispatchers.IO) { block(MissionClient(SerialMspLink(link.channel, timeoutMs = if (link.description.startsWith("USB")) 1000 else 1500))) }
                 }
             } catch (e: Exception) {
                 status = "Error: ${e.message}"
@@ -466,6 +482,7 @@ private fun MissionScreen(vm: MissionViewModel = viewModel()) {
     var confirmClear by remember { mutableStateOf(false) }
     var confirmDownload by remember { mutableStateOf(false) }
     var pendingUpload by remember { mutableStateOf<Boolean?>(null) }
+    var uploadWarnings by remember { mutableStateOf<List<String>>(emptyList()) }
     // Selecting a waypoint (map tap or table row) brings its editor up.
     LaunchedEffect(vm.selected) { if (vm.selected != null) { tab = 0; expanded = true } }
     val maxPanelHeight = (LocalConfiguration.current.screenHeightDp * 0.45f).dp
@@ -473,6 +490,7 @@ private fun MissionScreen(vm: MissionViewModel = viewModel()) {
     var showMapSettings by remember { mutableStateOf(false) }
     var showOffline by remember { mutableStateOf(false) }
     var showAbout by remember { mutableStateOf(false) }
+    var showBluetooth by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val locationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { vm.locate() }
     val saveFile = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(MissionFiles.CREATE_MIME)) { uri -> if (uri != null) vm.saveToFile(uri) }
@@ -566,9 +584,11 @@ private fun MissionScreen(vm: MissionViewModel = viewModel()) {
                 onOpenFile = { openFile.launch(arrayOf("*/*")) },
                 onShare = { context.startActivity(MissionFiles.shareChooser(context, vm.missionXml())) },
                 onAbout = { showAbout = true },
+                onBluetooth = { showBluetooth = true },
                 onUpload = { save ->
-                    // Low clearance is a warning, not a block: ask once, then let the user decide.
-                    if (vm.hasClearanceIssues) pendingUpload = save else vm.uploadToFc(save)
+                    // Warnings never block an upload: show them once, then let the user decide.
+                    val warnings = vm.uploadWarnings()
+                    if (warnings.isNotEmpty()) { uploadWarnings = warnings; pendingUpload = save } else vm.uploadToFc(save)
                 },
             )
             Row(
@@ -580,7 +600,7 @@ private fun MissionScreen(vm: MissionViewModel = viewModel()) {
                 FilterChip(
                     selected = expanded && tab == 1,
                     onClick = { tab = 1; expanded = true },
-                    label = { Text("List (${vm.waypoints.size})") },
+                    label = { Text("List (${vm.waypoints.size})" + if (vm.missionIssues.isNotEmpty()) " ⚠" else "") },
                 )
                 FilterChip(
                     selected = expanded && tab == 2,
@@ -630,22 +650,25 @@ private fun MissionScreen(vm: MissionViewModel = viewModel()) {
 
     if (showOffline) OfflineMapsDialog(vm, onDismiss = { showOffline = false })
     if (showAbout) AboutDialog(onDismiss = { showAbout = false })
+    if (showBluetooth) BluetoothDialog(vm, onDismiss = { showBluetooth = false })
 
     pendingUpload?.let { save ->
-        val worst = (vm.profile as? ProfileState.Ready)?.profile?.issues?.minByOrNull { it.lowestAglM }
         AlertDialog(
             onDismissRequest = { pendingUpload = null },
-            title = { Text("Low flight height") },
+            title = { Text("Check before uploading") },
             text = {
-                Text(
-                    "Part of the route is lower than ${vm.minAglM} m above ground" +
-                        (worst?.let { ": the lowest is ${it.lowestAglM.toInt()} m near point ${it.nearWaypoint}" } ?: "") +
-                        ". Check the Profile tab. Upload anyway?",
-                )
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    uploadWarnings.forEach { Text("⚠ $it") }
+                    Text("Upload anyway?")
+                }
             },
             confirmButton = { TextButton(onClick = { pendingUpload = null; vm.uploadToFc(save) }) { Text("Upload anyway") } },
             dismissButton = {
-                TextButton(onClick = { pendingUpload = null; tab = 2; expanded = true }) { Text("Show profile") }
+                TextButton(onClick = {
+                    pendingUpload = null
+                    expanded = true
+                    tab = if (vm.missionIssues.isNotEmpty()) 1 else 2
+                }) { Text("Show me") }
             },
         )
     }
@@ -691,6 +714,7 @@ private fun ActionBar(
     onShare: () -> Unit,
     onUpload: (saveToEeprom: Boolean) -> Unit,
     onAbout: () -> Unit,
+    onBluetooth: () -> Unit,
 ) {
     var menu by remember { mutableStateOf(false) }
     Row(
@@ -744,6 +768,10 @@ private fun ActionBar(
                     text = { Text("Add RTH at end") },
                     enabled = vm.waypoints.isNotEmpty(),
                     onClick = { menu = false; vm.addRthAtEnd() },
+                )
+                DropdownMenuItem(
+                    text = { Text("Bluetooth connection…") },
+                    onClick = { menu = false; onBluetooth() },
                 )
                 DropdownMenuItem(
                     text = { Text("About, licence and credits") },
