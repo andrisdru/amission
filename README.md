@@ -43,18 +43,17 @@ amission is not affiliated with or endorsed by the INAV project.
 | Connect, read mission info | ✅ |
 | Download the saved mission (loads it from EEPROM when working memory is empty) | ✅ |
 | Upload a mission, with read-back check; the quad flew the waypoints | ✅ (USB and Bluetooth) |
-| Read the quad's GPS (the no-fix case) | ✅ |
+| Read the quad's GPS, with and without a satellite fix | ✅ |
 | Bluetooth LE: find the module and connect (an early attempt timed out; a retry was added) | ✅ |
 
 | Verified on an Android emulator and a Samsung phone only (no FC involved) | |
 |---|---|
 | Map editing, waypoint editor, mission files (save, open, share), offline Street areas, Locate with phone GPS, terrain profile and warning, MapTiler satellite layer | ✅ |
+| Offline satellite areas with a real provider; Mapbox and custom tile URLs | ✅ |
+| Opening a saved `.mission` file in the INAV Configurator | ✅ |
 
 | **Not verified yet** | |
 |---|---|
-| Quad GPS with a real satellite fix | ❌ |
-| Offline satellite areas with a real provider; Mapbox and custom tile URLs | ❌ |
-| Opening a saved file in the Configurator | ❌ |
 | Bluetooth Classic (SPP) modules | ❌ |
 | Any INAV version other than 9.1, or any other flight controller | ❌ |
 

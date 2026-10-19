@@ -52,7 +52,7 @@ INAV waypoint altitude is relative to the take-off origin unless p3 bit 0 is set
 - Street is the keyless OpenFreeMap style. Satellite is a raster style built in `MapSettings.kt` from the user's own MapTiler/Mapbox key or a custom `{z}/{x}/{y}` template; the key lives only in app-private preferences and is excluded from Android backup (`res/xml/backup_rules.xml`, `data_extraction_rules.xml`). Never commit a key.
 - `MapSdk` (in `MapHttp.kt`) sets one User-Agent that identifies the app and at most 4 parallel requests per host. OpenFreeMap's terms ask for this and cap an offline download at 3,000 tiles or 50 MB; `OfflineMaps` enforces that for the Street layer. Re-read their terms before changing it.
 - Offline areas use MapLibre's offline region database for whatever style is active. Measured on the Street style: the first area also stores about 17-18 MB of font glyphs, shared by later areas. Waypoint markers are generated bitmaps, not map text, so they render offline without glyphs.
-- The satellite offline path (style written to a `file://` URL) has not been tried against a real provider.
+- The satellite offline path (style written to a `file://` URL) has been tried against real providers and works.
 - The map engine lists a source's credit in the "i" dialog only when it is written as an HTML link, so the satellite credits in `MapSettings.kt` are links to MapTiler's and Mapbox's credit pages and to OpenStreetMap. Plain text there is silently dropped (found on a real run: the satellite dialog listed nothing). A custom tile URL has no credit to show.
 - Terrain heights come from Open-Meteo's free tier: non-commercial use, CC BY 4.0 attribution (shown in the About dialog and Profile tab), under 10,000 calls a day.
 
