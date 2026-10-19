@@ -2,8 +2,9 @@
 
 An unofficial Android app for planning **INAV** waypoint missions and sending them to a flight controller over USB. It exists because there is no official Android mission planner for INAV.
 
-> **Early software (v0.1.x).**
-> Uploaded missions have been flown on one quad over USB and Bluetooth, but this is still flight software from a single developer. Check every mission before flying (download it again or open it in the INAV Configurator), test with the **props off** first, and stay in control of the aircraft. It comes with no warranty (see [License](#license)). Read [What has been tested](#what-has-been-tested) before trusting it.
+> **Flight-tested.** Missions uploaded with amission have been flown successfully, over both USB and Bluetooth, on a GEPRC TAKER H743 BT running INAV 9.1. Other INAV versions and flight controllers are untested.
+>
+> **Still early software (v0.1.x)**, written by a single developer. Check every mission before flying (download it again or open it in the INAV Configurator), test with the **props off** first, and stay in control of the aircraft. It comes with no warranty (see [License](#license)). Read [What has been tested](#what-has-been-tested) before trusting it.
 
 amission is not affiliated with or endorsed by the INAV project.
 
