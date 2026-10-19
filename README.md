@@ -25,7 +25,7 @@ amission is not affiliated with or endorsed by the INAV project.
 
 **Maps that work in the field**
 - Street map with no account or key. Satellite imagery from your own MapTiler or Mapbox key, or any tile URL you are licensed to use.
-- Save areas for offline use, with a size preview before you download.
+- **Offline maps:** save an area (Street or Satellite) to the phone before you go, with a size preview before you download, so the map works at the field with no signal. Satellite offline use depends on your provider's terms, and the Street layer follows OpenFreeMap's download limits.
 - **Locate** centres the map on the quad's GPS when it has a fix, otherwise on the phone's GPS.
 
 **Safety aids**
