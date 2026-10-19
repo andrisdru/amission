@@ -33,7 +33,7 @@ Gradle 9 needs JDK 17 or newer to run. If `JAVA_HOME` points at an older JDK, po
 ## Protocol notes
 
 - Waypoint wire format is 21 bytes little-endian: number u8, action u8, lat i32, lon i32 (degrees × 1e7), alt i32 (cm), p1/p2/p3 i16, flag u8 (0xA5 marks the last waypoint). Commands: WP_GETINFO 20, WP 118, SET_WP 209, WP_MISSION_LOAD 18, WP_MISSION_SAVE 19, RAW_GPS 106.
-- These were checked against the INAV 9.1.0 source (`fc_msp.c`, `navigation.h`, `navigation.c`, `logic_condition.c`). On a real FC over USB, reading info, downloading a mission (including loading the saved EEPROM mission) and reading GPS are confirmed. Uploading to a real FC has not been tried yet. Uploads are always read back and compared (`uploadAndVerify`). The max waypoint count comes from the FC; the source default is 15 unless the target overrides it.
+- These were checked against the INAV 9.1.0 source (`fc_msp.c`, `navigation.h`, `navigation.c`, `logic_condition.c`). On a real FC over USB, reading info, downloading a mission (including loading the saved EEPROM mission) and reading GPS are confirmed. Uploading to a real FC over USB and Bluetooth LE has been flown and works. Uploads are always read back and compared (`uploadAndVerify`). The max waypoint count comes from the FC; the source default is 15 unless the target overrides it.
 - INAV keeps a saved mission in EEPROM and only copies it into working memory at boot (`nav_wp_load_on_boot`) or on `WP_MISSION_LOAD`, so a download falls back to loading it when memory is empty.
 - p3 is a bitfield: bit 0 altitude is sea-level (absolute), bits 1-4 = user actions 1-4. User actions do nothing by themselves; the FC exposes them only to logic conditions ("Waypoint user action N" reads the waypoint just left, the `_NEXT_WP` operands the one being flown to) and, in 9.x, to the optional VTOL mission transition. For JUMP, p3 is a runtime counter (reset from p2 at mission start), so always send p3 = 0.
 - A Jump's p1 is a 1-based list number on the wire: the FC subtracts 1 on receive and adds 1 on read-back.
@@ -62,7 +62,7 @@ INAV waypoint altitude is relative to the take-off origin unless p3 bit 0 is set
 - No keys, tokens or personal data in code, tests, commit messages or docs.
 - Commit messages: imperative, sentence case, no `feat:`-style prefixes, never "WIP"; say why when it is not obvious.
 - An RTH entry's own altitude is not read by INAV (it just starts the normal return-to-home), so the editor offers none for RTH.
-- Not built yet: a mission library, Bluetooth download and upload tests on hardware.
+- Not built yet: a mission library.
 - Dragging a waypoint: `DraggableMapView` (in `MissionMap.kt`) judges a long press itself, before the map sees the touch. If a marker is under the finger it sends the map a cancel, keeps the rest of the gesture and reports moves; anywhere else the touch goes to the map, which pans. Live moves update the mission without saving; the save and the terrain lookup happen once when the finger lifts. Do not move that decision into a Compose gesture: the map would pan at the same time.
 - Home can be set from the quad's GPS (read over USB or Bluetooth, only with a usable fix), the phone's GPS, or the map centre (`HomeDialog.kt`). It is for planning only and is not sent to the FC.
 

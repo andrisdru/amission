@@ -11,3 +11,6 @@ captures/
 keystore.properties
 *.jks
 *.keystore
+
+# Claude Code local files
+.claude/

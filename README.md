@@ -2,10 +2,16 @@
 
 An unofficial Android app for planning **INAV** waypoint missions and sending them to a flight controller over USB. It exists because there is no official Android mission planner for INAV.
 
-> **Early software (v0.1.0). Not flight-proven.**
-> This is flight software. Check every mission in the INAV Configurator before flying, test with the **props off**, and stay in control of the aircraft. It comes with no warranty (see [License](#license)). Read [What has been tested](#what-has-been-tested) before trusting it.
+> **Early software (v0.1.x).**
+> Uploaded missions have been flown on one quad over USB and Bluetooth, but this is still flight software from a single developer. Check every mission before flying (download it again or open it in the INAV Configurator), test with the **props off** first, and stay in control of the aircraft. It comes with no warranty (see [License](#license)). Read [What has been tested](#what-has-been-tested) before trusting it.
 
 amission is not affiliated with or endorsed by the INAV project.
+
+<p align="center">
+  <img src="screenshots/point-editor.jpg" width="32%" alt="Map with a six-point mission and the point editor">
+  <img src="screenshots/mission-list.jpg" width="32%" alt="The mission as the flat list the flight controller stores">
+  <img src="screenshots/profile-satellite.jpg" width="32%" alt="Satellite map, More menu and the height-above-ground profile">
+</p>
 
 ## Features
 
@@ -32,12 +38,13 @@ amission is not affiliated with or endorsed by the INAV project.
 
 ## What has been tested
 
-| Verified on a real INAV 9.1 flight controller (GEPRC TAKER H743) over USB | |
+| Verified on a real INAV 9.1 flight controller (GEPRC TAKER H743 BT), over USB and Bluetooth LE | |
 |---|---|
 | Connect, read mission info | ✅ |
 | Download the saved mission (loads it from EEPROM when working memory is empty) | ✅ |
+| Upload a mission, with read-back check; the quad flew the waypoints | ✅ (USB and Bluetooth) |
 | Read the quad's GPS (the no-fix case) | ✅ |
-| Bluetooth LE: find the module, connect, and read mission info (one read-only test; one later attempt timed out. A retry was added, which has not been tested) | ✅ |
+| Bluetooth LE: find the module and connect (an early attempt timed out; a retry was added) | ✅ |
 
 | Verified on an Android emulator and a Samsung phone only (no FC involved) | |
 |---|---|
@@ -45,11 +52,11 @@ amission is not affiliated with or endorsed by the INAV project.
 
 | **Not verified yet** | |
 |---|---|
-| **Uploading** a mission to a real FC (the code reads back and compares, but it has not been run against hardware) | ❌ |
 | Quad GPS with a real satellite fix | ❌ |
 | Offline satellite areas with a real provider; Mapbox and custom tile URLs | ❌ |
 | Opening a saved file in the Configurator | ❌ |
-| Bluetooth: downloading or uploading a mission, Classic (SPP) modules | ❌ |
+| Bluetooth Classic (SPP) modules | ❌ |
+| Any INAV version other than 9.1, or any other flight controller | ❌ |
 
 Unit tests cover the protocol, the mission file format, the terrain profile and the tile maths (`./gradlew :msp:test`).
 
@@ -61,7 +68,7 @@ Unit tests cover the protocol, the mission file format, the terrain profile and 
 
 ## INAV versions
 
-This was compared against the INAV source of releases 2.6.0 to 9.1.0. Only **9.1 has been tried on hardware** (a GEPRC TAKER H743 BT); everything else here is read from the source, not tested.
+This was compared against the INAV source of releases 2.6.0 to 9.1.0. Only **9.1 has been tried on hardware** (a GEPRC TAKER H743 BT, flown with uploaded missions); everything else here is read from the source, not tested.
 
 | INAV version | Expected to work | Why |
 |---|---|---|
@@ -79,7 +86,9 @@ Not checked on any version: multi-mission setups (the app reads and writes only 
 
 ## Install
 
-There are no release builds yet. Build from source:
+Download the latest APK from the [Releases page](https://github.com/andrisdru/amission/releases) and install it on the phone (Android will ask you to allow installing from your browser or file manager). Each release lists the file's SHA-256 so you can check it. The APK is signed with the developer's key and is not on Google Play.
+
+### Build from source
 
 ```sh
 git clone https://github.com/andrisdru/amission.git
@@ -132,7 +141,6 @@ Protocol behaviour and the file format were checked against the INAV firmware an
 - The mission is shown as the flat list the FC stores. The Configurator instead groups RTH, Jump and Set Head under the previous map point, so point numbers can differ by those entries.
 - Only the first mission of a multi-mission file is opened. "PosHold unlimited" is not supported (INAV 9 does not have it).
 - MSP v1 only. Fixed-wing landing approaches, safe homes and VTOL options are not edited.
-- Android's debug build only so far.
 
 ## Contributing
 
