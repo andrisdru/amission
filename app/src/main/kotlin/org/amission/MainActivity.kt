@@ -460,6 +460,27 @@ class MissionViewModel(app: Application) : AndroidViewModel(app) {
 
     fun select(index: Int) { selected = index }
 
+    /** Adds a point on the route right after list entry [afterIndex] and selects it; its altitude is that of the point before it. */
+    fun insertAfter(afterIndex: Int, lat: Double, lon: Double) {
+        if (afterIndex !in waypoints.indices) return
+        val wp = Waypoint(
+            number = 0, action = WaypointAction.WAYPOINT,
+            latE7 = (Geo.clampLatitude(lat) * 1e7).roundToInt(), lonE7 = (Geo.normalizeLongitude(lon) * 1e7).roundToInt(),
+            altitudeCm = defaultAltM * 100,
+        )
+        update(waypoints.toMutableList().also { it.add(afterIndex + 1, wp) }, sel = afterIndex + 1)
+        status = "Inserted point ${afterIndex + 2}"
+    }
+
+    /** Swaps a list entry with its neighbour ([delta] -1 up, +1 down); the selection follows it. */
+    fun moveEntry(index: Int, delta: Int) {
+        val to = index + delta
+        if (index !in waypoints.indices || to !in waypoints.indices) return
+        val list = waypoints.toMutableList()
+        list.add(to, list.removeAt(index))
+        update(list, sel = if (selected == index) to else selected)
+    }
+
     /**
      * Called continuously while a marker is dragged on the map: moves it on screen but neither saves nor looks up
      * terrain, which would be hundreds of times per drag. [moveWaypointDone] does both once the finger lifts.
@@ -717,6 +738,7 @@ private fun MissionScreen(vm: MissionViewModel = viewModel()) {
                 selected = vm.selected,
                 onMapTap = vm::addWaypoint,
                 onSelect = vm::select,
+                onInsert = vm::insertAfter,
                 onMoveWaypoint = vm::moveWaypointLive,
                 onMoveEnd = vm::moveWaypointDone,
                 onViewportChanged = vm::onViewportChanged,

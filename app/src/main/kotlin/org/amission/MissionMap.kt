@@ -57,6 +57,9 @@ private const val SRC_ME = "me-position"
 private const val SRC_HOME = "home-position"
 private const val LAYER_POINTS = "wp-points-layer"
 
+/** How long a finger rests on a marker before it is picked up for dragging. */
+private const val HOLD_MS = 250L
+
 /** MapLibre map showing the mission. Tapping empty map adds a waypoint; tapping a waypoint selects it. */
 @Composable
 fun MissionMap(
@@ -64,6 +67,7 @@ fun MissionMap(
     selected: Int?,
     onMapTap: (lat: Double, lon: Double) -> Unit,
     onSelect: (index: Int) -> Unit,
+    onInsert: (afterIndex: Int, lat: Double, lon: Double) -> Unit,
     onMoveWaypoint: (index: Int, lat: Double, lon: Double) -> Unit,
     onMoveEnd: (index: Int) -> Unit,
     onViewportChanged: (Viewport) -> Unit,
@@ -80,6 +84,8 @@ fun MissionMap(
     var styleReady by remember { mutableStateOf(false) }
     val tap by rememberUpdatedState(onMapTap)
     val select by rememberUpdatedState(onSelect)
+    val insert by rememberUpdatedState(onInsert)
+    val currentWaypoints by rememberUpdatedState(waypoints)
     val moveWaypoint by rememberUpdatedState(onMoveWaypoint)
     val moveEnd by rememberUpdatedState(onMoveEnd)
     val viewportChanged by rememberUpdatedState(onViewportChanged)
@@ -108,14 +114,12 @@ fun MissionMap(
             mapView.screenToLatLng = { x, y -> m.projection.fromScreenLocation(PointF(x, y)) }
             mapView.markerAt = { x, y ->
                 val reach = 28f * mapView.resources.displayMetrics.density
-                val hits = m.queryRenderedFeatures(RectF(x - reach, y - reach, x + reach, y + reach), LAYER_POINTS)
+                // Judged from the waypoint positions rather than rendered features, so it works the moment a marker is on screen.
                 // Several markers can overlap under a finger; take the one whose centre is closest.
-                hits.mapNotNull { f ->
-                    val idx = f.getNumberProperty("idx")?.toInt() ?: return@mapNotNull null
-                    val p = f.geometry() as? Point ?: return@mapNotNull null
-                    val s = m.projection.toScreenLocation(LatLng(p.latitude(), p.longitude()))
-                    idx to hypot(s.x - x, s.y - y)
-                }.minByOrNull { it.second }?.first
+                currentWaypoints.withIndex().filter { it.value.action.hasPosition }.map { (i, w) ->
+                    val s = m.projection.toScreenLocation(LatLng(w.latitude, w.longitude))
+                    i to hypot(s.x - x, s.y - y)
+                }.filter { it.second <= reach }.minByOrNull { it.second }?.first
             }
             mapView.onDragStart = { select(it) }
             mapView.onDragMove = { i, lat, lon -> moveWaypoint(i, lat, lon) }
@@ -124,7 +128,13 @@ fun MissionMap(
                 val screen: PointF = m.projection.toScreenLocation(latLng)
                 val hit = m.queryRenderedFeatures(screen, LAYER_POINTS).firstOrNull()
                 val idx = hit?.getNumberProperty("idx")?.toInt()
-                if (idx != null) select(idx) else tap(latLng.latitude, latLng.longitude)
+                if (idx != null) {
+                    select(idx)
+                } else {
+                    val seg = nearestSegment(m, currentWaypoints, screen, 24f * mapView.resources.displayMetrics.density)
+                    if (seg != null) insert(seg.first, seg.second.latitude, seg.second.longitude)
+                    else tap(latLng.latitude, latLng.longitude)
+                }
                 true
             }
         }
@@ -135,7 +145,6 @@ fun MissionMap(
     }
 
     // Zoom to the mission whenever a fit is requested (after a download, on start, or via the Fit chip).
-    val currentWaypoints by rememberUpdatedState(waypoints)
     LaunchedEffect(map, fitRequest) {
         val m = map ?: return@LaunchedEffect
         if (fitRequest == 0) return@LaunchedEffect
@@ -176,6 +185,30 @@ fun MissionMap(
         val m = map
         if (m != null && styleReady) m.getStyle { updateMission(it, markers, waypoints, selected, locate, home) }
     }
+}
+
+/**
+ * The route segment closest to a tapped screen point, if within [reach] pixels: the list index of the segment's first
+ * point and the spot on the segment to insert at. Only points the quad flies to form the route, as in [updateMission].
+ */
+private fun nearestSegment(m: MapLibreMap, waypoints: List<Waypoint>, tap: PointF, reach: Float): Pair<Int, LatLng>? {
+    val flown = waypoints.withIndex().filter { it.value.action.hasPosition && it.value.action.isFlownTo }
+    var best: Pair<Int, LatLng>? = null
+    var bestDist = reach
+    for (k in 0 until flown.size - 1) {
+        val a = m.projection.toScreenLocation(LatLng(flown[k].value.latitude, flown[k].value.longitude))
+        val b = m.projection.toScreenLocation(LatLng(flown[k + 1].value.latitude, flown[k + 1].value.longitude))
+        val dx = b.x - a.x
+        val dy = b.y - a.y
+        val len2 = dx * dx + dy * dy
+        val t = if (len2 == 0f) 0f else (((tap.x - a.x) * dx + (tap.y - a.y) * dy) / len2).coerceIn(0f, 1f)
+        val d = hypot(tap.x - (a.x + t * dx), tap.y - (a.y + t * dy))
+        if (d < bestDist) {
+            bestDist = d
+            best = flown[k].index to m.projection.fromScreenLocation(PointF(a.x + t * dx, a.y + t * dy))
+        }
+    }
+    return best
 }
 
 private fun createMapView(context: Context): DraggableMapView {
@@ -219,7 +252,7 @@ private class DraggableMapView(context: Context) : MapView(context) {
                 startY = ev.y
                 val r = Runnable { pickUp() }
                 pending = r
-                postDelayed(r, ViewConfiguration.getLongPressTimeout().toLong())
+                postDelayed(r, HOLD_MS)
             }
             MotionEvent.ACTION_POINTER_DOWN -> if (dragIndex == null) cancelPending()
             MotionEvent.ACTION_MOVE ->
@@ -246,7 +279,7 @@ private class DraggableMapView(context: Context) : MapView(context) {
 
     private fun pickUp() {
         pending = null
-        val index = markerAt?.invoke(lastX, lastY) ?: return // long press on empty map: leave it to the map
+        val index = markerAt?.invoke(startX, startY) ?: return // long press on empty map: leave it to the map
         // Tell the map its pan or tap is over, then take the rest of the touch for ourselves.
         val cancel = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), MotionEvent.ACTION_CANCEL, lastX, lastY, 0)
         mapDispatch(cancel)

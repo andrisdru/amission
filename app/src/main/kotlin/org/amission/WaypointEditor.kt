@@ -48,6 +48,7 @@ import kotlin.math.roundToInt
 private val LabelWidth = 120.dp
 private val FieldWidth = 170.dp
 private val TableIndent = 72.dp
+private val MoveWidth = 72.dp
 
 /** "Edit point N" panel, modelled on the INAV Configurator mission control panel. */
 @Composable
@@ -302,7 +303,7 @@ fun MissionTable(vm: MissionViewModel) {
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
                 modifier = Modifier.padding(start = 4.dp).width(TableIndent - 8.dp),
             ) { Text("+") }
-            HeaderCell("#", 0.5f); HeaderCell("Type", 2f); HeaderCell("P1", 1f); HeaderCell("P2", 1f)
+            HeaderCell("#", 0.5f); HeaderCell("Type", 2f); HeaderCell("P1", 1f); HeaderCell("P2", 1f); Box(Modifier.width(MoveWidth))
         }
         vm.waypoints.forEachIndexed { i, w ->
             val bg = if (i == vm.selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent
@@ -311,6 +312,12 @@ fun MissionTable(vm: MissionViewModel) {
             ) {
                 Box(Modifier.width(TableIndent))
                 Cell("${w.number}", 0.5f); Cell(w.action.label, 2f); Cell("${w.p1}", 1f); Cell("${w.p2}", 1f)
+                Row(Modifier.width(MoveWidth)) {
+                    Text("▲", Modifier.clickable(enabled = i > 0) { vm.moveEntry(i, -1) }.padding(horizontal = 8.dp),
+                        color = if (i > 0) MaterialTheme.colorScheme.primary else Color.Transparent)
+                    Text("▼", Modifier.clickable(enabled = i < vm.waypoints.lastIndex) { vm.moveEntry(i, 1) }.padding(horizontal = 8.dp),
+                        color = if (i < vm.waypoints.lastIndex) MaterialTheme.colorScheme.primary else Color.Transparent)
+                }
             }
         }
     }
